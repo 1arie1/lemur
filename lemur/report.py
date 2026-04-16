@@ -106,6 +106,63 @@ def lemma_summary_rows(records: list[LemmaRecord],
     return rows
 
 
+# --- Lemma list (one line per lemma) ---
+
+def render_lemma_list_rich(records: list[LemmaRecord], console: Console,
+                           varmap: dict[str, str] | None = None):
+    """Render a table with one row per lemma."""
+    vm = varmap or {}
+    table = Table(title=f'All lemmas ({len(records)})', show_lines=False)
+    table.add_column('#', justify='right', style='dim')
+    table.add_column('Strategy')
+    table.add_column('Conclusion')
+    table.add_column('Monomials', style='cyan')
+    table.add_column('Precond', justify='right')
+    table.add_column('Vars', justify='right')
+
+    for i, r in enumerate(records, 1):
+        strategy = _pp_strategy(r.strategy) if r.strategy else '<?>'
+        conclusion = _apply_varmap(r.conclusion or '', vm)
+        hint = _monomial_hint_short(r, vm)
+        table.add_row(
+            str(i),
+            strategy,
+            conclusion,
+            hint,
+            str(len(r.preconditions)),
+            str(len(r.variables)),
+        )
+    console.print(table)
+
+
+def render_lemma_list_plain(records: list[LemmaRecord],
+                            varmap: dict[str, str] | None = None) -> str:
+    """Render one line per lemma as plain text."""
+    vm = varmap or {}
+    lines = []
+    for i, r in enumerate(records, 1):
+        strategy = _pp_strategy(r.strategy) if r.strategy else '<?>'
+        conclusion = _apply_varmap(r.conclusion or '<no conclusion>', vm)
+        hint = _monomial_hint_short(r, vm)
+        parts = [f'{i}.', strategy, f'==> {conclusion}']
+        if hint:
+            parts.append(f'[{hint}]')
+        lines.append(' '.join(parts))
+    return '\n'.join(lines)
+
+
+def _monomial_hint_short(record: LemmaRecord,
+                         varmap: dict[str, str] | None = None) -> str:
+    """Short monomial hint: just variable names, no definitions."""
+    if not record.monomials:
+        return ''
+    vm = varmap or {}
+    names = []
+    for m in sorted(record.monomials, key=lambda x: _variable_name_sort_key(x.variable)):
+        names.append(vm.get(m.variable, m.variable))
+    return ', '.join(names)
+
+
 # --- Lemma detail table (Rich) ---
 
 def render_lemma_detail(record: LemmaRecord, index: int,

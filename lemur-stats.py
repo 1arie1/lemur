@@ -18,6 +18,7 @@ from lemur.stats import build_stats_output
 from lemur.table import output, make_console
 from lemur.report import (
     render_lemma_detail, render_lemma_detail_plain,
+    render_lemma_list_rich, render_lemma_list_plain,
     parse_lemma_ranges, expand_lemma_ranges,
 )
 
@@ -43,6 +44,8 @@ def main():
                              help='Number of lemma previews to show (default: 5)')
     lemma_group.add_argument('--lemma-delta-limit', type=int, default=5,
                              help='Max variable change lines to show (default: 5)')
+    lemma_group.add_argument('--lemma-list', action='store_true',
+                             help='List all lemmas, one per line')
     lemma_group.add_argument('--lemma-detail', type=int, default=None,
                              help='Show full variable table for Nth lemma (1-based)')
     lemma_group.add_argument('--lemma-details', type=str, default=None,
@@ -77,8 +80,17 @@ def main():
     detail_indices = expand_lemma_ranges(detail_ranges, len(lemma_records)) if detail_ranges else []
 
     # If showing details only, skip the summary
-    if not detail_indices:
+    if not detail_indices and not args.lemma_list:
         output(stats, fmt=fmt, console=console)
+
+    # Render lemma list (one line per lemma)
+    if args.lemma_list and lemma_records:
+        if console and use_rich:
+            render_lemma_list_rich(lemma_records, console, varmap=varmap)
+        else:
+            print(render_lemma_list_plain(lemma_records, varmap=varmap))
+    elif args.lemma_list and not lemma_records:
+        print("No lemma records found (is nla_solver tag present?)", file=sys.stderr)
 
     # Render lemma details
     if detail_indices and lemma_records:
