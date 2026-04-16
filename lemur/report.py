@@ -20,14 +20,65 @@ from lemur.lemma import LemmaAnalyzer, LemmaRecord, Precondition, VariableAssign
 # --- Constants ---
 
 HUGE_BOUND_THRESHOLD = 10 ** 18
-POW2_THRESHOLD = 2 ** 16
+# Only humanize numbers larger than this threshold
+HUMANIZE_THRESHOLD = 2 ** 10
 _VARIABLE_NAME_RE = re.compile(r'^(?P<prefix>[A-Za-z_]+?)(?P<number>\d+)$')
+# Matches standalone integer literals in text (for humanize_constants)
+_INTEGER_IN_TEXT_RE = re.compile(r'(?<![#\w])(\d{4,})(?!\w)')
 
 # Regex matching LP variable tokens (j25, _t95, etc.) for varmap substitution
 _LP_VAR_TOKEN_RE = re.compile(r'\b(j\d+|_t\d+)\b')
 
 # Max length for inline SMT expression before truncation
 _SMT_EXPR_MAX_LEN = 40
+
+
+def humanize_number(n: int) -> str | None:
+    """Return a human-friendly representation if n is near a power of 2.
+
+    Returns None if no compact representation applies.
+    Only triggers for |n| > HUMANIZE_THRESHOLD.
+    """
+    if abs(n) <= HUMANIZE_THRESHOLD:
+        return None
+
+    sign = ''
+    v = n
+    if v < 0:
+        sign = '-'
+        v = -v
+
+    # exact power of 2
+    if v & (v - 1) == 0:
+        exp = v.bit_length() - 1
+        return f'{sign}2^{exp}'
+
+    # 2^k - 1 (all bits set)
+    if (v + 1) & v == 0:
+        exp = (v + 1).bit_length() - 1
+        return f'{sign}2^{exp}-1'
+
+    # 2^k + 1
+    if (v - 1) & (v - 2) == 0 and v > 2:
+        exp = (v - 1).bit_length() - 1
+        return f'{sign}2^{exp}+1'
+
+    return None
+
+
+def humanize_constants(text: str) -> str:
+    """Replace large integer literals in text with human-friendly forms.
+
+    E.g., '16384*j6' → '2^14*j6', 'j138 <= 16383' → 'j138 <= 2^14-1'
+    """
+    def _repl(m: re.Match) -> str:
+        try:
+            n = int(m.group(1))
+        except ValueError:
+            return m.group(0)
+        h = humanize_number(n)
+        return h if h else m.group(0)
+    return _INTEGER_IN_TEXT_RE.sub(_repl, text)
 
 
 def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
@@ -114,7 +165,7 @@ def lemma_summary_rows(records: list[LemmaRecord],
         for i, record in enumerate(records[:lemma_limit], 1):
             strategy = _pp_strategy(record.strategy) if record.strategy else '<?>'
             conclusion = record.conclusion or '<no conclusion>'
-            conclusion = _apply_varmap(conclusion, vm)
+            conclusion = humanize_constants(_apply_varmap(conclusion, vm))
             hint = _monomial_hint(record, vm)
             rows.append((f'  {i}. {strategy}', f'==> {conclusion}{hint}'))
         if len(records) > lemma_limit:
@@ -150,7 +201,7 @@ def render_lemma_list_rich(records: list[LemmaRecord], console: Console,
 
     for i, r in enumerate(records, 1):
         strategy = _pp_strategy(r.strategy) if r.strategy else '<?>'
-        conclusion = _apply_varmap(r.conclusion or '', vm)
+        conclusion = humanize_constants(_apply_varmap(r.conclusion or '', vm))
         hint = _monomial_hint_short(r, vm)
         table.add_row(
             str(i),
@@ -213,12 +264,12 @@ def render_lemma_detail(record: LemmaRecord, index: int,
                 prec_text.append('\n')
             if cond.index is not None:
                 prec_text.append(f'({cond.index}) ', style='dim')
-            prec_text.append(_apply_varmap(cond.expression, vm))
+            prec_text.append(humanize_constants(_apply_varmap(cond.expression, vm)))
         console.print(Panel(prec_text, title=f'{title} — Preconditions', expand=False))
 
     # Conclusion
     if record.conclusion:
-        conclusion_text = _apply_varmap(record.conclusion, vm)
+        conclusion_text = humanize_constants(_apply_varmap(record.conclusion, vm))
         console.print(Panel(
             Text(f'==> {conclusion_text}', style='bold'),
             title='Conclusion', expand=False,
@@ -259,10 +310,10 @@ def render_lemma_detail(record: LemmaRecord, index: int,
         if has_varmap:
             row.append(smt_name)
         row.extend([
-            format_value(var.value),
+            humanize_constants(format_value(var.value)),
             'Y' if var.is_basic else '',
-            format_bounds(var.bounds),
-            _apply_varmap(var.definition, vm) if var.definition else '',
+            humanize_constants(format_bounds(var.bounds)),
+            humanize_constants(_apply_varmap(var.definition, vm)) if var.definition else '',
             root_text,
         ])
         table.add_row(*row)
@@ -432,7 +483,11 @@ def _bound_repr(v) -> str:
     if _is_infinite(v):
         return 'oo' if v >= 0 else '-oo'
     if isinstance(v, float) and v.is_integer():
-        return str(int(v))
+        v = int(v)
+    if isinstance(v, int):
+        h = humanize_number(v)
+        if h:
+            return h
     return str(v)
 
 
@@ -447,7 +502,7 @@ def format_bounds(bounds: str | None) -> str:
 
 
 def format_value(value: str | None) -> str:
-    """Format a numeric value, showing powers of 2 for large values."""
+    """Format a numeric value, showing human-friendly form for large values."""
     if not value:
         return ''
     stripped = value.strip()
@@ -457,17 +512,15 @@ def format_value(value: str | None) -> str:
         number = int(stripped, 10)
     except ValueError:
         return value
-    if number <= POW2_THRESHOLD or number <= 0:
+    h = humanize_number(number)
+    if h is None:
         return value
-    if number & (number - 1):
-        return value
-    exponent = number.bit_length() - 1
     # Preserve original whitespace
     prefix_len = len(value) - len(value.lstrip())
     suffix_len = len(value) - len(value.rstrip())
     prefix = value[:prefix_len]
     suffix = value[len(value) - suffix_len:] if suffix_len else ''
-    return f'{prefix}2^{exponent}{suffix}'
+    return f'{prefix}{h}{suffix}'
 
 
 # --- Sort keys ---
