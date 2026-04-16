@@ -33,8 +33,14 @@ _LP_VAR_TOKEN_RE = re.compile(r'\b(j\d+|_t\d+)\b')
 _SMT_EXPR_MAX_LEN = 40
 
 
+# Style used for humanized constants in Rich output
+_HUMANIZE_STYLE = 'bright_cyan'
+# Threshold for digit grouping (numbers >= this get underscores if no power-of-2 form)
+_DIGIT_GROUP_THRESHOLD = 1_000_000
+
+
 def humanize_number(n: int) -> str | None:
-    """Return a human-friendly representation if n is near a power of 2.
+    """Return a compact representation if n is near a power of 2.
 
     Returns None if no compact representation applies.
     Only triggers for |n| > HUMANIZE_THRESHOLD.
@@ -66,10 +72,20 @@ def humanize_number(n: int) -> str | None:
     return None
 
 
-def humanize_constants(text: str) -> str:
-    """Replace large integer literals in text with human-friendly forms.
+def _format_large_int(n: int) -> str | None:
+    """Digit-group large numbers that aren't near powers of 2.
 
-    E.g., '16384*j6' → '2^14*j6', 'j138 <= 16383' → 'j138 <= 2^14-1'
+    Returns None for small numbers.
+    """
+    if abs(n) < _DIGIT_GROUP_THRESHOLD:
+        return None
+    return f'{n:_}'
+
+
+def humanize_constants(text: str) -> str:
+    """Replace large integer literals with human-friendly Rich-markup forms.
+
+    Power-of-2 forms get colored. Other large numbers get digit grouping.
     """
     def _repl(m: re.Match) -> str:
         try:
@@ -77,8 +93,43 @@ def humanize_constants(text: str) -> str:
         except ValueError:
             return m.group(0)
         h = humanize_number(n)
-        return h if h else m.group(0)
+        if h:
+            return f'[{_HUMANIZE_STYLE}]{h}[/{_HUMANIZE_STYLE}]'
+        dg = _format_large_int(n)
+        if dg:
+            return dg
+        return m.group(0)
     return _INTEGER_IN_TEXT_RE.sub(_repl, text)
+
+
+def humanize_text(text: str) -> Text:
+    """Build a Rich Text object with styled spans for humanized constants.
+
+    Use this for Text() objects where Rich markup strings don't work.
+    """
+    result = Text()
+    last_end = 0
+    for m in _INTEGER_IN_TEXT_RE.finditer(text):
+        # Append text before this match
+        if m.start() > last_end:
+            result.append(text[last_end:m.start()])
+        try:
+            n = int(m.group(1))
+        except ValueError:
+            result.append(m.group(0))
+            last_end = m.end()
+            continue
+        h = humanize_number(n)
+        if h:
+            result.append(h, style=_HUMANIZE_STYLE)
+        else:
+            dg = _format_large_int(n)
+            result.append(dg if dg else m.group(0))
+        last_end = m.end()
+    # Append remaining text
+    if last_end < len(text):
+        result.append(text[last_end:])
+    return result
 
 
 def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
@@ -264,16 +315,15 @@ def render_lemma_detail(record: LemmaRecord, index: int,
                 prec_text.append('\n')
             if cond.index is not None:
                 prec_text.append(f'({cond.index}) ', style='dim')
-            prec_text.append(humanize_constants(_apply_varmap(cond.expression, vm)))
+            prec_text.append_text(humanize_text(_apply_varmap(cond.expression, vm)))
         console.print(Panel(prec_text, title=f'{title} — Preconditions', expand=False))
 
     # Conclusion
     if record.conclusion:
-        conclusion_text = humanize_constants(_apply_varmap(record.conclusion, vm))
-        console.print(Panel(
-            Text(f'==> {conclusion_text}', style='bold'),
-            title='Conclusion', expand=False,
-        ))
+        conclusion_ht = humanize_text(_apply_varmap(record.conclusion, vm))
+        conc_text = Text('==> ', style='bold')
+        conc_text.append_text(conclusion_ht)
+        console.print(Panel(conc_text, title='Conclusion', expand=False))
 
     # Variable table
     if not record.variables:
@@ -488,6 +538,9 @@ def _bound_repr(v) -> str:
         h = humanize_number(v)
         if h:
             return h
+        dg = _format_large_int(v)
+        if dg:
+            return dg
     return str(v)
 
 
