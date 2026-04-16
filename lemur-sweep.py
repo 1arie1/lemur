@@ -40,7 +40,7 @@ def main():
                         help='Enable z3 AST trace log (trace=true). Requires --save.')
     parser.add_argument('--save', default=None,
                         help='Directory to save raw outputs and traces')
-    parser.add_argument('--format', '-f', choices=['rich', 'csv', 'json'], default=None,
+    parser.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                         help='Output format (default: rich for TTY, csv otherwise)')
     parser.add_argument('--no-color', action='store_true',
                         help='Disable color output')
@@ -88,7 +88,7 @@ def main():
     fmt = args.format
     show_progress = (fmt is None or fmt == 'rich') and sys.stdout.isatty()
 
-    console = make_console(no_color=args.no_color) if fmt != 'csv' and fmt != 'json' else None
+    console = make_console(no_color=args.no_color) if fmt != 'plain' and fmt != 'json' else None
 
     if show_progress and console:
         console.print(f"[bold]lemur-sweep[/bold] {benchmark.name}")
@@ -133,7 +133,7 @@ def main():
             import json
             cmd_data = {config: cmdline for config, cmdline in cmds}
             print(json.dumps({"commands": cmd_data}, indent=2))
-        elif fmt == 'csv':
+        elif fmt == 'plain':
             print()
             for config, cmdline in cmds:
                 print(f"# {config}")

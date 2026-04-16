@@ -33,7 +33,7 @@ def main():
                         help='Filter to specific tag(s). Repeatable.')
     parser.add_argument('--function', '--fn', action='append', default=None,
                         help='Filter to specific function(s). Repeatable.')
-    parser.add_argument('--format', '-f', choices=['rich', 'csv', 'json'], default=None,
+    parser.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                         help='Output format (default: rich for TTY, csv otherwise)')
     parser.add_argument('--no-color', action='store_true',
                         help='Disable color output')

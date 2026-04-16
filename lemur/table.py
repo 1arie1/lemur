@@ -3,7 +3,7 @@ Output formatting for lemur tools.
 
 Provides dual-mode output:
 - Rich tables/panels for human consumption (default when TTY)
-- CSV/JSON for machine consumption (--format csv|json, or non-TTY default)
+- Plain/JSON for machine consumption (--format plain|json, or non-TTY default)
 """
 
 import csv
@@ -150,16 +150,16 @@ def output(obj: SweepTable | StatsOutput, fmt: str | None = None,
            console: Console | None = None):
     """Render output in the requested format.
 
-    fmt: 'rich' (default for TTY), 'csv', 'json'
+    fmt: 'rich' (default for TTY), 'plain', 'json'
     """
     if fmt is None:
-        fmt = 'rich' if is_tty() else 'csv'
+        fmt = 'rich' if is_tty() else 'plain'
 
     if fmt == 'rich':
         if console is None:
             console = make_console()
         obj.render_rich(console)
-    elif fmt == 'csv':
+    elif fmt == 'plain':
         print(obj.to_csv(), end='')
     elif fmt == 'json':
         print(obj.to_json())
