@@ -1,0 +1,115 @@
+# 🐒 Lemur — Z3 Trace Analysis & Debugging Toolkit
+
+*Like lemma, but with better eyesight* 👀
+
+Tools for analyzing Z3 trace logs, running parameter sweeps, and comparing
+solver behavior across configurations. Pure Python, no Z3 dependency — just
+text parsing.
+
+## 🌴 Setup
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+```
+
+Or install system-wide: `python3 -m pip install --user --break-system-packages rich`
+
+## 🔧 Tools
+
+### 🌀 lemur-sweep — Seed/config sweep runner
+
+Run Z3 on a benchmark across seeds and configurations, collect results in a
+table. Each run uses an isolated temp directory for trace file safety.
+
+```bash
+# Basic sweep
+python3 ~/ag/lemur/lemur-sweep.py problem.smt2 --seeds 0-15 --timeout 30
+
+# Multiple configs, parallel, with trace capture
+python3 ~/ag/lemur/lemur-sweep.py problem.smt2 --seeds 0-15 --timeout 30 \
+  --config "baseline:" \
+  --config "inc1: smt.arith.nl.nra_incremental=1" \
+  --config "inc2: smt.arith.nl.nra_incremental=2 smt.arith.nl.nra_max_conflicts=1000" \
+  --trace nla_solver,nra \
+  --save ./sweep_results \
+  -j 4
+```
+
+Config format: `"name: key=val key=val"` or `"name:"` for defaults.
+Quoted names work: `"\"mode 1\": key=val"`.
+
+Output includes copy-pasteable z3 command lines for manual re-run
+(suppress with `--no-commands`).
+
+**Saved files** (with `--save DIR`):
+| File | Contents |
+|------|----------|
+| `config_sN.trace` | `.z3-trace` file (requires `--trace`) |
+| `config_sN.stdout` | z3 stdout |
+| `config_sN.stderr` | z3 stderr (includes `-v:2` verbose stats) |
+| `config_sN.z3log` | AST trace log (requires `--z3-log`) |
+
+**Key options:**
+- `--z3 PATH` — z3 binary (default: `~/ag/z3/z3-edge/build/z3`)
+- `--verbosity N` — z3 `-v:N` flag (default: 2, 0 to disable)
+- `--z3-log` — enable AST trace log (`trace=true`), requires `--save`
+- `--format csv|json|rich` — output format (auto-detects TTY)
+
+### 🔍 lemur-stats — Trace file analyzer
+
+Parse `.z3-trace` files and display structured statistics with tag-specific
+analysis for `nla_solver` and `nra`.
+
+```bash
+# Summary of a trace file
+python3 ~/ag/lemur/lemur-stats.py .z3-trace
+
+# Filter to specific tag
+python3 ~/ag/lemur/lemur-stats.py .z3-trace --tag nla_solver
+
+# Show detailed variable table for lemma #3
+python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-detail 3
+
+# Show details for lemmas 1 through 5
+python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-details 1:5
+
+# Machine-readable output
+python3 ~/ag/lemur/lemur-stats.py .z3-trace -f json
+```
+
+**Lemma analysis** (for `~lemma_builder` entries in `nla_solver` tag):
+- Strategy distribution (nla-pseudo-linear, grobner-quotient, etc.)
+- Lemma previews with monomial hints
+- Variable tables: value, bounds, definition, root, basic flag
+- Monomial highlighting (cyan), root mismatch detection (red)
+- Variable delta tracking across consecutive lemmas (bounds tightening, value changes)
+
+## 🐾 Z3 Trace Format
+
+Z3 debug builds support tracing via `-tr:TAG`. Output goes to `.z3-trace`
+in the working directory. Each entry:
+
+```
+-------- [TAG] function_name /path/to/file.cpp:LINE ---------
+<free-form body>
+------------------------------------------------
+```
+
+Relevant tags: `nla_solver` (and variants like `nla_solver_details`), `nra`,
+`nlsat_*`. Tags are defined in `src/util/trace_tags.def`.
+
+## 🌿 Architecture
+
+```
+lemur-sweep.py          CLI entry point
+lemur-stats.py          CLI entry point
+lemur/
+  parsers.py            Trace block parser (header/body/footer)
+  sweep.py              Sweep engine (subprocess pool, temp dirs)
+  table.py              Rich/CSV/JSON output formatting
+  stats.py              Per-tag statistics computation
+  lemma.py              ~lemma_builder structured parser
+  report.py             Rich lemma detail rendering
+tests/sample_traces/    Sample trace files for testing
+```
