@@ -201,6 +201,7 @@ STRATEGY_SHORT_NAMES = {
     # grobner
     'grobner-quotient': 'grob-q',
     'grobner-factored': 'grob-f',
+    'grobner-eq': 'grob-eq',
     # pseudo-linear / sign / neutral
     'nla-pseudo-linear': 'pseudo-lin',
     'basic_sign_lemma_model_based_one_mon': 'sign-1mon',
@@ -215,9 +216,30 @@ STRATEGY_SHORT_NAMES = {
     'pdd': 'pdd',
 }
 
+# Substring-based fallbacks for verbose strategies (checked if exact match fails)
+_STRATEGY_PATTERNS = [
+    ('x1/y1 <= x2/y2', 'div-mono'),
+    ('x1/y1 >= x2/y2', 'div-mono'),
+    ('x1*y1 <= x2*y2', 'mul-mono'),
+    ('x1*y1 >= x2*y2', 'mul-mono'),
+]
+
+# Max display length for strategy names (truncate unknown long ones)
+_STRATEGY_MAX_LEN = 16
+
 
 def _pp_strategy(name: str) -> str:
-    return STRATEGY_SHORT_NAMES.get(name, name)
+    short = STRATEGY_SHORT_NAMES.get(name)
+    if short:
+        return short
+    # Try substring patterns
+    for pattern, abbrev in _STRATEGY_PATTERNS:
+        if pattern in name:
+            return abbrev
+    # Truncate unknown long names
+    if len(name) > _STRATEGY_MAX_LEN:
+        return name[:_STRATEGY_MAX_LEN - 1] + '~'
+    return name
 
 
 # --- Lemma summary (integrated into stats) ---
