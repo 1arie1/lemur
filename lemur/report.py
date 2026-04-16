@@ -49,11 +49,39 @@ def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
 
 
 STRATEGY_SHORT_NAMES = {
+    # nlsat / bounded_nlsat
     'check': 'nlsat',
+    # propagation
     'propagate value - lower bound of range is above value': 'low>val',
     'propagate value - upper bound of range is below value': 'hi<val',
     'propagate fixed - infeasible lra': 'fixed-infeas',
+    # order lemmas
+    'order_lemma_on_binomial_sign': 'ord-binom',
+    'order_lemma_on_binomial_ac_bd': 'ord-acbd',
+    'order_lemma_on_factor_binomial_explore': 'ord-factor',
+    'order_lemma_on_factor_binomial_rm': 'ord-rm',
+    # monotonicity / tangent
+    'monotonicity <': 'mono<',
+    'monotonicity >': 'mono>',
+    'monotonicity > ': 'mono>',
+    'tangent line 1': 'tan1',
+    'tangent line 2': 'tan2',
+    'generate tangent plane': 'tan-plane',
+    # grobner
+    'grobner-quotient': 'grob-q',
+    'grobner-factored': 'grob-f',
+    # pseudo-linear / sign / neutral
+    'nla-pseudo-linear': 'pseudo-lin',
+    'basic_sign_lemma_model_based_one_mon': 'sign-1mon',
     'basic_lemma_for_mon_neutral_from_monomial_to_product': 'neutral-mon',
+    'basic_lemma_for_mon_neutral_from_factors_to_monic_model_based_fm': 'neutral-fac',
+    # other
+    'generate_pl_on_mon': 'pl-mon',
+    'generate_mon_ol': 'mon-ol',
+    'add_lemma': 'add',
+    'check_nex': 'nex',
+    'strict case 0': 'strict0',
+    'pdd': 'pdd',
 }
 
 
