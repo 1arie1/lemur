@@ -54,7 +54,7 @@ Output includes copy-pasteable z3 command lines for manual re-run
 - `--z3 PATH` — z3 binary (default: `~/ag/z3/z3-edge/build/z3`)
 - `--verbosity N` — z3 `-v:N` flag (default: 2, 0 to disable)
 - `--z3-log` — enable AST trace log (`trace=true`), requires `--save`
-- `--format csv|json|rich` — output format (auto-detects TTY)
+- `--format plain|json|rich` — output format (auto-detects TTY)
 
 ### 🔍 lemur-stats — Trace file analyzer
 
@@ -68,6 +68,9 @@ python3 ~/ag/lemur/lemur-stats.py .z3-trace
 # Filter to specific tag
 python3 ~/ag/lemur/lemur-stats.py .z3-trace --tag nla_solver
 
+# List all lemmas, one per line
+python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-list
+
 # Show detailed variable table for lemma #3
 python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-detail 3
 
@@ -76,14 +79,22 @@ python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-details 1:5
 
 # Machine-readable output
 python3 ~/ag/lemur/lemur-stats.py .z3-trace -f json
+
+# Ignore varmap, show raw j-variables
+python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-detail 3 --no-varmap
 ```
 
 **Lemma analysis** (for `~lemma_builder` entries in `nla_solver` tag):
-- Strategy distribution (nla-pseudo-linear, grobner-quotient, etc.)
-- Lemma previews with monomial hints
-- Variable tables: value, bounds, definition, root, basic flag
+- Strategy distribution with short names (pseudo-lin, grob-q, ord-binom, div-mono, etc.)
+- `--lemma-list` — all lemmas at a glance, one row per lemma
+- `--lemma-detail N` / `--lemma-details 1:5` — full variable tables
+- Variable tables: value, bounds, definition, root, basic flag, SMT name (via varmap)
 - Monomial highlighting (cyan), root mismatch detection (red)
 - Variable delta tracking across consecutive lemmas (bounds tightening, value changes)
+- Large constants humanized in Rich mode: `16384` → `2^14`, `16383` → `2^14-1`,
+  numbers >= 1M digit-grouped: `1_062_993_921`. Power-of-2 forms colored bright_cyan.
+- Varmap support: maps internal LP variables (j25) to SMT expressions (R21).
+  Pre-humanized so `(mod R2 2^64)` instead of truncated raw numbers.
 
 ## 🐾 Z3 Trace Format
 
@@ -99,17 +110,21 @@ in the working directory. Each entry:
 Relevant tags: `nla_solver` (and variants like `nla_solver_details`), `nra`,
 `nlsat_*`. Tags are defined in `src/util/trace_tags.def`.
 
+Z3 also has a second trace mechanism (`trace=true`, output to `z3.log`) that
+logs AST construction events. Captured with `--z3-log` in lemur-sweep. This is
+all-or-nothing with no per-event filtering.
+
 ## 🌿 Architecture
 
 ```
 lemur-sweep.py          CLI entry point
 lemur-stats.py          CLI entry point
 lemur/
-  parsers.py            Trace block parser (header/body/footer)
+  parsers.py            Trace block parser (header/body/footer) + varmap
   sweep.py              Sweep engine (subprocess pool, temp dirs)
-  table.py              Rich/CSV/JSON output formatting
+  table.py              Rich/plain/JSON output formatting
   stats.py              Per-tag statistics computation
   lemma.py              ~lemma_builder structured parser
-  report.py             Rich lemma detail rendering
+  report.py             Lemma rendering, humanization, strategy names
 tests/sample_traces/    Sample trace files for testing
 ```
