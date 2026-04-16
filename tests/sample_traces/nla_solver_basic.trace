@@ -1,0 +1,500 @@
+-------- [nla_solver] register_existing_terms /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.cpp:2708 ---------
+registering 7 terms
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 153 := 135 143  r ( 135 143 ) = 16384 143
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 145 := 7 135  r ( 7 135 ) = 16384 7
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 136 := 6 135  r ( 6 135 ) = 16384 6
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 153 := 135 143  r ( 135 143 ) = 16384 143
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 145 := 7 135  r ( 7 135 ) = 16384 7
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 136 := 6 135  r ( 6 135 ) = 16384 6
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 153 := 135 143  r ( 135 143 ) = 16384 143
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 145 := 7 135  r ( 7 135 ) = 16384 7
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 136 := 6 135  r ( 6 135 ) = 16384 6
+------------------------------------------------
+-------- [nla_solver] check /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1288 ---------
+calls = 1
+------------------------------------------------
+-------- [nla_solver] init_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:648 ---------
+3 mons to refine:
+j136 := j6 * j135
+:error = 16383
+j153 := j135 * j143
+:error = 16384
+j123 := j13 * j117
+:error = -2.65748e+08
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j153 := j135 * j143
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j153 -j157 -16384j126 -_t164 
+j153 =  16384 base    [-oo, oo]	j153 base
+j157 =      0         [0, 16383]	j126 =      0         [-oo, oo]	j164 =  16384         [1, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 153
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j153 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 157
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 157 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j123 := j13 * j117
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j123 -j125 -16384j126 
+j123 =      0 base    [-oo, oo]	j123 base
+j125 =      0         [0, 16383]	j126 =      0         [-oo, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 123
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j123 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 125
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 125 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1196 ---------
+r = 0, v = 265748480
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 13
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 13 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+-163 +j117 -21/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 -4096/25 +1/25j120 
+j117 =  16220 base    [0, oo]	j117 base
+j120 =      4         [0, 24]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 117
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j117 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 120
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 120 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j136 := j6 * j135
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j136 -16384j139 -j138 
+j136 =  16383 base    [-oo, oo]	j136 base
+j139 =      0         [0, oo]	j138 =  16383         [0, 16383]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 136
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j136 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 139
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 139 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomials_on_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1224 ---------
+sz = 3, m_to_refine = 3 same
+------------------------------------------------
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+nla-pseudo-linear 1
+(538) j135 <= 16384
+(540) j135 >= 16384
+ ==> - 16384*j6 + j136 = 0
+j135 =  16384         [16384, 16384]	
+root=j135
+j6 =      0           [0, 18446744073709551615]	
+root=j6
+j136 := j6 * j135
+j136 =  16383         [-oo, oo]	
+root=j136
+------------------------------------------------
+-------- [nla_solver] propagate_fixed_to_zero /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:422 ---------
+propagate fixed 153 := 135 143  r ( 135 143 ) =  0, fixed_to_zero = 143
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 153 := 135 143  r ( 135 143 ) = 16384 143
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 145 := 7 135  r ( 7 135 ) = 16384 7
+------------------------------------------------
+-------- [nla_solver] propagate_nonfixed /Users/arie/ag/z3/z3-edge/src/math/lp/monomial_bounds.cpp:444 ---------
+propagate nonfixed 136 := 6 135  r ( 6 135 ) = 16384 6
+------------------------------------------------
+-------- [nla_solver] check /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1288 ---------
+calls = 2
+------------------------------------------------
+-------- [nla_solver] init_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:648 ---------
+4 mons to refine:
+j145 := j7 * j135
+:error = 32767
+j153 := j135 * j143
+:error = 32768
+j123 := j13 * j117
+:error = -2.65732e+08
+j136 := j6 * j135
+:error = 16383
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j136 := j6 * j135
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j136 -j138 -16384j137 
+j136 =  16383 base    [-oo, oo]	j136 base
+j138 =  16383         [0, 16383]	j137 =      0         [0, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 136
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j136 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 138
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1129 ---------
+u = 138, m_patched_m  = j136 := j6 * j135
+, not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 141
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1129 ---------
+u = 141, m_patched_m  = j136 := j6 * j135
+, not blocked
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j145 := j7 * j135
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j157 +_t164 +j145 -j147 +16384_t152 -j153 +16384j137 
+j157 =      0         [0, 16383]	j164 =  16384         [1, oo]	j145 =  32767 base    [-oo, oo]	j145 base
+j147 =  16383         [0, 16383]	j152 =      0         [0, oo]	j153 =  32768         [-oo, oo]	j137 =      0         [0, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 145
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j145 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 157
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 157 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j153 := j135 * j143
+
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 153
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j153 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 154
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1129 ---------
+u = 154, m_patched_m  = j153 := j135 * j143
+, not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 160
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1129 ---------
+u = 160, m_patched_m  = j153 := j135 * j143
+, not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 157
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 157 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j123 := j13 * j117
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j123 -j125 +j147 -16384_t152 -16384j137 -j145 
+j123 =  16384 base    [-oo, oo]	j123 base
+j125 =      0         [0, 16383]	j147 =  16383         [0, 16383]	j152 =      0         [0, oo]	j137 =      0         [0, oo]	j145 =  32767         [-oo, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 123
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j123 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 125
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 125 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1196 ---------
+r = 1/16220, v = 265748480
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+-16384j4 +j13 
+j4 =      1           [1, 4294967295]	j13 =  16384  base    [1, 70368744161280]	j13 base
+
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 13
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 13 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+-163 +j117 -j116 
+j117 =  16220 base    [-oo, 16220]	j117 base
+j116 =  16057         [-oo, 16057]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 117
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j117 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 116
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1129 ---------
+u = 116, m_patched_m  = j123 := j13 * j117
+, not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 120
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 120 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomials_on_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1224 ---------
+sz = 4, m_to_refine = 3 less
+------------------------------------------------
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+nla-pseudo-linear 2
+(344) j135 >= 16384
+(346) j135 <= 16384
+ ==> - 16384*j7 + j145 = 0
+j7 =      0           [0, 18446744073709551615]	
+root=j7
+j135 =  16384         [16384, 16384]	
+root=j135
+j145 := j7 * j135
+j145 =  32767         [-oo, oo]	
+root=j145
+------------------------------------------------
+-------- [nla_solver] check /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1288 ---------
+calls = 3
+------------------------------------------------
+-------- [nla_solver] init_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:648 ---------
+2 mons to refine:
+j153 := j135 * j143
+:error = 16384
+j123 := j13 * j117
+:error = 2.68698e+06
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j153 := j135 * j143
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+-j157 -_t164 +j147 -16384_t152 +j153 -16384j137 -268435456j10 
+j157 =      0         [0, 16383]	j164 =  16384         [1, oo]	j147 =      0         [0, 16383]	j152 =      0         [0, oo]	j153 = 268451840 base    [-oo, oo]	j153 base
+j137 =      0         [0, oo]	j10 =      1          [1, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 153
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j153 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 157
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 157 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1196 ---------
+r = 16385/16384, v = 268435456
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j143 -j6 -16384j10 
+j143 =  16384 base    [0, 18446744073709551615]	j143 base
+j6 =      0           [0, 18446744073709551615]	j10 =      1          [1, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 143
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j143 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 6
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1124 ---------
+u = 6 blocked as used in a correct monomial
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1164 ---------
+m = j123 := j13 * j117
+
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+j123 -j125 +j147 -16384_t152 -16384j137 -268435456j10 
+j123 = 268435456 base    [-oo, oo]	j123 base
+j125 =      0         [0, 16383]	j147 =      0         [0, 16383]	j152 =      0         [0, oo]	j137 =      0         [0, oo]	j10 =      1          [1, oo]	
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 123
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1113 ---------
+u == m_patched_var, no block
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:387 ---------
+j123 not blocked
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 125
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 125 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1176 ---------
+ trying squares
+------------------------------------------------
+-------- [nla_solver] patch_monomial /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1196 ---------
+r = 4096/4055, v = 265748480
+------------------------------------------------
+-------- [nla_solver] try_to_patch /Users/arie/ag/z3/z3-edge/src/math/lp/lar_solver.h:379 ---------
+-16384j4 +j13 
+j4 =      1           [1, 4294967295]	j13 =  16384  base    [1, 70368744161280]	j13 base
+
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 13
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 13 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1105 ---------
+u = 117
+------------------------------------------------
+-------- [nla_solver] is_patch_blocked /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1108 ---------
+u = 117 blocked, for feas or integr
+------------------------------------------------
+-------- [nla_solver] patch_monomials_on_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1224 ---------
+sz = 2, m_to_refine = 2 same
+------------------------------------------------
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+nla-pseudo-linear 3
+(344) j135 >= 16384
+(346) j135 <= 16384
+ ==> - 16384*j143 + j153 = 0
+j135 =  16384         [16384, 16384]	
+root=j135
+j143 =  16384         [0, 18446744073709551615]	
+root=j143
+j153 := j135 * j143
+j153 = 268451840         [-oo, oo]	
+root=j154
+------------------------------------------------
+-------- [nla_solver] check /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:1288 ---------
+calls = 4
+------------------------------------------------
+-------- [nla_solver] init_to_refine /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:648 ---------
