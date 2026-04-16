@@ -99,6 +99,7 @@ if os.getpid() == os.getpid():  # always true, but signals set at import
 
 def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                timeout: int, trace_tags: list[str] | None = None,
+               verbosity: int = 2,
                save_dir: str | None = None) -> RunResult:
     """Run a single Z3 invocation in a temp directory."""
 
@@ -117,8 +118,9 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         for k, v in config.params.items():
             cmd.append(f"{k}={v}")
 
-        # Add seed and timeout
+        # Add verbosity, seed, and timeout
         cmd.extend([
+            f"-v:{verbosity}",
             f"sat.random_seed={seed}",
             f"smt.random_seed={seed}",
             f"nlsat.seed={seed}",
@@ -206,6 +208,7 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
 def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               configs: list[RunConfig], timeout: int, jobs: int = 1,
               trace_tags: list[str] | None = None,
+              verbosity: int = 2,
               save_dir: str | None = None,
               show_progress: bool = True) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults."""
@@ -247,14 +250,15 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
         if jobs == 1:
             for config, seed in work:
                 result = run_single(z3_bin, smt_file, seed, config,
-                                    timeout, trace_tags, save_dir)
+                                    timeout, trace_tags, verbosity, save_dir)
                 process_result(result)
         else:
             with ProcessPoolExecutor(max_workers=jobs) as executor:
                 futures = {}
                 for config, seed in work:
                     f = executor.submit(run_single, z3_bin, smt_file, seed,
-                                        config, timeout, trace_tags, save_dir)
+                                        config, timeout, trace_tags, verbosity,
+                                        save_dir)
                     futures[f] = (config.name, seed)
 
                 for f in as_completed(futures):

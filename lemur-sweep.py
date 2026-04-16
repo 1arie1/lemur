@@ -34,6 +34,8 @@ def main():
                         help='Parallel jobs (default: 1)')
     parser.add_argument('--trace', default=None,
                         help='Comma-separated trace tags to enable (e.g., nla_solver,nra)')
+    parser.add_argument('--verbosity', type=int, default=2,
+                        help='Z3 verbosity level, -v:N (default: 2, 0 to disable)')
     parser.add_argument('--save', default=None,
                         help='Directory to save raw outputs and traces')
     parser.add_argument('--format', '-f', choices=['rich', 'csv', 'json'], default=None,
@@ -99,6 +101,7 @@ def main():
         timeout=args.timeout,
         jobs=args.jobs,
         trace_tags=trace_tags,
+        verbosity=args.verbosity,
         save_dir=args.save,
         show_progress=show_progress,
     )
