@@ -99,7 +99,7 @@ if os.getpid() == os.getpid():  # always true, but signals set at import
 
 def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                timeout: int, trace_tags: list[str] | None = None,
-               verbosity: int = 2,
+               verbosity: int = 2, z3_log: bool = False,
                save_dir: str | None = None) -> RunResult:
     """Run a single Z3 invocation in a temp directory."""
 
@@ -117,6 +117,10 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         # Add config params
         for k, v in config.params.items():
             cmd.append(f"{k}={v}")
+
+        # Enable AST trace log if requested (writes to z3.log in CWD)
+        if z3_log:
+            cmd.extend(['trace=true', 'trace_file_name=z3.log'])
 
         # Add verbosity, seed, and timeout
         cmd.extend([
@@ -175,6 +179,11 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             if proc.stderr.strip():
                 prefix.with_suffix('.stderr').write_text(proc.stderr)
 
+            # z3 AST trace log
+            z3_log_src = Path(tmpdir) / 'z3.log'
+            if z3_log_src.exists() and z3_log_src.stat().st_size > 0:
+                shutil.copy2(z3_log_src, prefix.with_suffix('.z3log'))
+
         return RunResult(
             config=config.name,
             seed=seed,
@@ -208,7 +217,7 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
 def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               configs: list[RunConfig], timeout: int, jobs: int = 1,
               trace_tags: list[str] | None = None,
-              verbosity: int = 2,
+              verbosity: int = 2, z3_log: bool = False,
               save_dir: str | None = None,
               show_progress: bool = True) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults."""
@@ -250,7 +259,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
         if jobs == 1:
             for config, seed in work:
                 result = run_single(z3_bin, smt_file, seed, config,
-                                    timeout, trace_tags, verbosity, save_dir)
+                                    timeout, trace_tags, verbosity, z3_log,
+                                    save_dir)
                 process_result(result)
         else:
             with ProcessPoolExecutor(max_workers=jobs) as executor:
@@ -258,7 +268,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                 for config, seed in work:
                     f = executor.submit(run_single, z3_bin, smt_file, seed,
                                         config, timeout, trace_tags, verbosity,
-                                        save_dir)
+                                        z3_log, save_dir)
                     futures[f] = (config.name, seed)
 
                 for f in as_completed(futures):

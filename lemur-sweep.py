@@ -36,6 +36,8 @@ def main():
                         help='Comma-separated trace tags to enable (e.g., nla_solver,nra)')
     parser.add_argument('--verbosity', type=int, default=2,
                         help='Z3 verbosity level, -v:N (default: 2, 0 to disable)')
+    parser.add_argument('--z3-log', action='store_true',
+                        help='Enable z3 AST trace log (trace=true). Requires --save.')
     parser.add_argument('--save', default=None,
                         help='Directory to save raw outputs and traces')
     parser.add_argument('--format', '-f', choices=['rich', 'csv', 'json'], default=None,
@@ -77,6 +79,11 @@ def main():
     if args.trace:
         trace_tags = [t.strip() for t in args.trace.split(',')]
 
+    # Validate --z3-log requires --save
+    if args.z3_log and not args.save:
+        print("Error: --z3-log requires --save (log files need a destination)", file=sys.stderr)
+        sys.exit(1)
+
     # Determine output format
     fmt = args.format
     show_progress = (fmt is None or fmt == 'rich') and sys.stdout.isatty()
@@ -102,6 +109,7 @@ def main():
         jobs=args.jobs,
         trace_tags=trace_tags,
         verbosity=args.verbosity,
+        z3_log=args.z3_log,
         save_dir=args.save,
         show_progress=show_progress,
     )
