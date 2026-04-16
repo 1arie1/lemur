@@ -89,7 +89,7 @@ def main():
             console.print(f"  trace: {', '.join(trace_tags)}")
         console.print()
 
-    table = run_sweep(
+    table, results = run_sweep(
         z3_bin=z3_bin,
         smt_file=str(benchmark),
         seeds=seeds,
@@ -105,6 +105,39 @@ def main():
         console.print()
 
     output(table, fmt=fmt, console=console)
+
+    # Print command lines for manual re-run
+    if results:
+        # Show one command per config (seed is easy to change)
+        seen_configs = set()
+        cmds = []
+        for r in results:
+            if r.config not in seen_configs and r.cmdline:
+                seen_configs.add(r.config)
+                cmds.append((r.config, r.cmdline))
+
+        if fmt == 'json':
+            import json
+            cmd_data = {config: cmdline for config, cmdline in cmds}
+            print(json.dumps({"commands": cmd_data}, indent=2))
+        elif fmt == 'csv':
+            print()
+            for config, cmdline in cmds:
+                print(f"# {config}")
+                print(cmdline)
+        else:
+            if console:
+                console.print()
+                from rich.panel import Panel
+                from rich.text import Text
+                lines = Text()
+                for i, (config, cmdline) in enumerate(cmds):
+                    if i > 0:
+                        lines.append("\n")
+                    lines.append(f"# {config}\n", style="bold dim")
+                    lines.append(cmdline)
+                console.print(Panel(lines, title="Commands (change seeds to re-run)",
+                                    expand=False))
 
 
 if __name__ == '__main__':

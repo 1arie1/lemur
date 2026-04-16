@@ -58,6 +58,7 @@ class RunResult:
     stdout: str
     stderr: str
     trace_file: Path | None  # path to saved trace, if any
+    cmdline: str = ''  # copy-pasteable z3 command for manual re-run
 
 
 # Global set of temp dirs for cleanup on unexpected exit
@@ -125,6 +126,10 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             smt_file,
         ])
 
+        # Build a copy-pasteable command line (uses shlex for safe quoting)
+        import shlex
+        cmdline = shlex.join(cmd)
+
         start = time.monotonic()
         proc = subprocess.run(
             cmd,
@@ -164,18 +169,22 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             stdout=proc.stdout,
             stderr=proc.stderr,
             trace_file=trace_dest,
+            cmdline=cmdline,
         )
 
     except subprocess.TimeoutExpired:
         return RunResult(
             config=config.name, seed=seed, status='timeout',
             time_s=float(timeout), stdout='', stderr='timeout (process killed)',
-            trace_file=None,
+            trace_file=None, cmdline=cmdline,
         )
     except Exception as e:
+        import shlex
+        cmdline = shlex.join(cmd) if 'cmd' in dir() else ''
         return RunResult(
             config=config.name, seed=seed, status='error',
             time_s=0.0, stdout='', stderr=str(e), trace_file=None,
+            cmdline=cmdline,
         )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -186,14 +195,15 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               configs: list[RunConfig], timeout: int, jobs: int = 1,
               trace_tags: list[str] | None = None,
               save_dir: str | None = None,
-              show_progress: bool = True) -> SweepTable:
-    """Run a full sweep and return a populated SweepTable."""
+              show_progress: bool = True) -> tuple[SweepTable, list[RunResult]]:
+    """Run a full sweep and return a populated SweepTable and all RunResults."""
 
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
     config_names = [c.name for c in configs]
     table = SweepTable(config_names, seeds)
+    all_results: list[RunResult] = []
     total = len(configs) * len(seeds)
 
     # Build work items
@@ -215,6 +225,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
 
     def process_result(result: RunResult):
         table.add_result(result.config, result.seed, result.status, result.time_s)
+        all_results.append(result)
         if progress:
             desc = f"[dim]{result.config}[/dim] s{result.seed}: {result.status}"
             progress.update(task_id, advance=1, description=desc)
@@ -238,7 +249,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                     result = f.result()
                     process_result(result)
 
-    return table
+    return table, all_results
 
 
 class _nullcontext:
