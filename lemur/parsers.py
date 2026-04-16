@@ -113,3 +113,45 @@ def group_by_function(entries: list[TraceEntry]) -> dict[str, list[TraceEntry]]:
     for entry in entries:
         groups.setdefault(entry.function, []).append(entry)
     return groups
+
+
+# --- Varmap parsing ---
+
+# Matches entries like: j25=103: R21  or  _t95=257: (+ -1 R76 R83)
+_VARMAP_ENTRY_RE = re.compile(
+    r'([A-Za-z_]\w*)=\d+:\s+(.*?)(?=\s+[A-Za-z_]\w+=\d+:|$)'
+)
+
+
+def parse_varmap_line(line: str) -> dict[str, str]:
+    """Parse a single varmap: line into a {jvar: smt_expr} dict.
+
+    Line format: varmap: j25=103: R21 j28=113: (div R20 R21) ...
+    Returns empty dict if the line isn't a varmap line.
+    """
+    prefix = 'varmap:'
+    if not line.startswith(prefix):
+        return {}
+    payload = line[len(prefix):]
+    result: dict[str, str] = {}
+    for m in _VARMAP_ENTRY_RE.finditer(payload):
+        var_name = m.group(1)
+        smt_expr = m.group(2).strip()
+        if smt_expr:
+            result[var_name] = smt_expr
+    return result
+
+
+def collect_varmap(entries: list[TraceEntry]) -> dict[str, str]:
+    """Build a global j-variable to SMT-expression map from all varmap lines.
+
+    Scans all trace entries for varmap: lines in the body and unions them.
+    Returns empty dict if no varmap lines are found (graceful degradation).
+    """
+    varmap: dict[str, str] = {}
+    for entry in entries:
+        for line in entry.body_lines():
+            stripped = line.strip()
+            if stripped.startswith('varmap:'):
+                varmap.update(parse_varmap_line(stripped))
+    return varmap

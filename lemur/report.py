@@ -23,6 +23,31 @@ HUGE_BOUND_THRESHOLD = 10 ** 18
 POW2_THRESHOLD = 2 ** 16
 _VARIABLE_NAME_RE = re.compile(r'^(?P<prefix>[A-Za-z_]+?)(?P<number>\d+)$')
 
+# Regex matching LP variable tokens (j25, _t95, etc.) for varmap substitution
+_LP_VAR_TOKEN_RE = re.compile(r'\b(j\d+|_t\d+)\b')
+
+# Max length for inline SMT expression before truncation
+_SMT_EXPR_MAX_LEN = 40
+
+
+def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
+    """Replace LP variable tokens (j25, _t95, ...) with their SMT names.
+
+    Returns text unchanged if varmap is empty or no tokens match.
+    """
+    if not varmap:
+        return text
+    def _repl(m: re.Match) -> str:
+        token = m.group(0)
+        smt = varmap.get(token)
+        if smt is None:
+            return token
+        if len(smt) > _SMT_EXPR_MAX_LEN:
+            return smt[:_SMT_EXPR_MAX_LEN - 3] + '...'
+        return smt
+    return _LP_VAR_TOKEN_RE.sub(_repl, text)
+
+
 STRATEGY_SHORT_NAMES = {
     'check': 'nlsat',
     'propagate value - lower bound of range is above value': 'low>val',
@@ -40,8 +65,11 @@ def _pp_strategy(name: str) -> str:
 
 def lemma_summary_rows(records: list[LemmaRecord],
                        lemma_limit: int = 5,
-                       delta_limit: int = 5) -> list[tuple[str, str]]:
+                       delta_limit: int = 5,
+                       varmap: dict[str, str] | None = None,
+                       ) -> list[tuple[str, str]]:
     """Generate key-value rows summarizing lemma records, for StatsOutput."""
+    vm = varmap or {}
     rows: list[tuple[str, str]] = []
     rows.append(('Lemmas generated', str(len(records))))
 
@@ -58,7 +86,8 @@ def lemma_summary_rows(records: list[LemmaRecord],
         for i, record in enumerate(records[:lemma_limit], 1):
             strategy = _pp_strategy(record.strategy) if record.strategy else '<?>'
             conclusion = record.conclusion or '<no conclusion>'
-            hint = _monomial_hint(record)
+            conclusion = _apply_varmap(conclusion, vm)
+            hint = _monomial_hint(record, vm)
             rows.append((f'  {i}. {strategy}', f'==> {conclusion}{hint}'))
         if len(records) > lemma_limit:
             rows.append(('', f'  ... {len(records) - lemma_limit} more'))
@@ -80,8 +109,11 @@ def lemma_summary_rows(records: list[LemmaRecord],
 # --- Lemma detail table (Rich) ---
 
 def render_lemma_detail(record: LemmaRecord, index: int,
-                        console: Console):
+                        console: Console,
+                        varmap: dict[str, str] | None = None):
     """Render a detailed lemma table with Rich."""
+    vm = varmap or {}
+
     # Title
     title_parts = [_pp_strategy(record.strategy) if record.strategy else '<unknown>']
     if record.lemma_id is not None:
@@ -96,13 +128,14 @@ def render_lemma_detail(record: LemmaRecord, index: int,
                 prec_text.append('\n')
             if cond.index is not None:
                 prec_text.append(f'({cond.index}) ', style='dim')
-            prec_text.append(cond.expression)
+            prec_text.append(_apply_varmap(cond.expression, vm))
         console.print(Panel(prec_text, title=f'{title} — Preconditions', expand=False))
 
     # Conclusion
     if record.conclusion:
+        conclusion_text = _apply_varmap(record.conclusion, vm)
         console.print(Panel(
-            Text(f'==> {record.conclusion}', style='bold'),
+            Text(f'==> {conclusion_text}', style='bold'),
             title='Conclusion', expand=False,
         ))
 
@@ -112,9 +145,12 @@ def render_lemma_detail(record: LemmaRecord, index: int,
         return
 
     monomial_names = {m.variable for m in record.monomials}
+    has_varmap = bool(vm)
 
     table = Table(title=f'{title} — Variables', show_lines=False)
     table.add_column('Variable', style='bold')
+    if has_varmap:
+        table.add_column('SMT Name', style='green')
     table.add_column('Value', justify='right')
     table.add_column('Basic', justify='center')
     table.add_column('Bounds')
@@ -132,20 +168,27 @@ def render_lemma_detail(record: LemmaRecord, index: int,
         if var.root and var.root != var.name:
             root_text.stylize('red')
 
-        table.add_row(
-            name_text,
+        smt_name = _truncate_smt(vm.get(var.name, '')) if has_varmap else None
+
+        row = [name_text]
+        if has_varmap:
+            row.append(smt_name)
+        row.extend([
             format_value(var.value),
             'Y' if var.is_basic else '',
             format_bounds(var.bounds),
-            var.definition or '',
+            _apply_varmap(var.definition, vm) if var.definition else '',
             root_text,
-        )
+        ])
+        table.add_row(*row)
 
     console.print(table)
 
 
-def render_lemma_detail_plain(record: LemmaRecord, index: int) -> str:
+def render_lemma_detail_plain(record: LemmaRecord, index: int,
+                              varmap: dict[str, str] | None = None) -> str:
     """Render a lemma detail as plain text (for CSV/JSON modes)."""
+    vm = varmap or {}
     lines = []
     title_parts = [_pp_strategy(record.strategy) if record.strategy else '<unknown>']
     if record.lemma_id is not None:
@@ -156,15 +199,18 @@ def render_lemma_detail_plain(record: LemmaRecord, index: int) -> str:
         lines.append('Preconditions:')
         for cond in sorted(record.preconditions, key=_precondition_sort_key):
             prefix = f'  ({cond.index}) ' if cond.index is not None else '  '
-            lines.append(f'{prefix}{cond.expression}')
+            lines.append(f'{prefix}{_apply_varmap(cond.expression, vm)}')
 
     if record.conclusion:
-        lines.append(f'Conclusion: ==> {record.conclusion}')
+        lines.append(f'Conclusion: ==> {_apply_varmap(record.conclusion, vm)}')
 
     if record.variables:
         lines.append('Variables:')
         for var in sorted(record.variables, key=_variable_sort_key):
             parts = [f'  {var.name}']
+            smt = vm.get(var.name)
+            if smt:
+                parts.append(f'({_truncate_smt(smt)})')
             if var.value:
                 parts.append(f'= {format_value(var.value)}')
             if var.is_basic:
@@ -172,7 +218,7 @@ def render_lemma_detail_plain(record: LemmaRecord, index: int) -> str:
             if var.bounds:
                 parts.append(format_bounds(var.bounds))
             if var.definition:
-                parts.append(f':= {var.definition}')
+                parts.append(f':= {_apply_varmap(var.definition, vm)}')
             if var.root and var.root != var.name:
                 parts.append(f'root={var.root}')
             lines.append(' '.join(parts))
@@ -358,12 +404,23 @@ def _precondition_sort_key(cond: Precondition) -> tuple:
     return (0, cond.index, cond.expression)
 
 
-def _monomial_hint(record: LemmaRecord) -> str:
+def _truncate_smt(smt: str, max_len: int = _SMT_EXPR_MAX_LEN) -> str:
+    """Truncate long SMT expressions for display."""
+    if len(smt) <= max_len:
+        return smt
+    return smt[:max_len - 3] + '...'
+
+
+def _monomial_hint(record: LemmaRecord,
+                   varmap: dict[str, str] | None = None) -> str:
     if not record.monomials:
         return ''
+    vm = varmap or {}
     parts = []
     for m in sorted(record.monomials, key=lambda x: _variable_name_sort_key(x.variable)):
-        parts.append(f'{m.variable} := {m.expression}')
+        expr = _apply_varmap(m.expression, vm)
+        var_display = vm.get(m.variable, m.variable)
+        parts.append(f'{var_display} := {expr}')
     return f' [{"; ".join(parts)}]'
 
 

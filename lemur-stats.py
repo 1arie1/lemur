@@ -47,6 +47,8 @@ def main():
                              help='Show full variable table for Nth lemma (1-based)')
     lemma_group.add_argument('--lemma-details', type=str, default=None,
                              help='Show detail for lemma ranges: 3, 5:10, 2-4, :5, 12:')
+    lemma_group.add_argument('--no-varmap', action='store_true',
+                             help='Ignore varmap data; show raw LP j-variables')
 
     args = parser.parse_args()
 
@@ -55,10 +57,12 @@ def main():
         print(f"Error: trace file not found: {trace_path}", file=sys.stderr)
         sys.exit(1)
 
-    stats, lemma_records = build_stats_output(
+    stats, lemma_records, varmap = build_stats_output(
         trace_path, tags=args.tag, functions=args.function,
         lemma_limit=args.lemma_limit, delta_limit=args.lemma_delta_limit,
     )
+    if args.no_varmap:
+        varmap = {}
 
     fmt = args.format
     use_rich = fmt is None or fmt == 'rich'
@@ -86,10 +90,10 @@ def main():
                 continue
             if console and use_rich:
                 console.print()
-                render_lemma_detail(lemma_records[i], idx, console)
+                render_lemma_detail(lemma_records[i], idx, console, varmap=varmap)
             else:
                 print()
-                print(render_lemma_detail_plain(lemma_records[i], idx))
+                print(render_lemma_detail_plain(lemma_records[i], idx, varmap=varmap))
     elif detail_indices and not lemma_records:
         print("No lemma records found (is nla_solver tag present?)", file=sys.stderr)
 

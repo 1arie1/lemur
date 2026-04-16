@@ -9,7 +9,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from lemur.parsers import TraceEntry, parse_trace, group_by_tag, group_by_function
+from lemur.parsers import TraceEntry, parse_trace, group_by_tag, group_by_function, collect_varmap
 from lemur.table import StatsOutput
 from lemur.lemma import LemmaAnalyzer, LemmaRecord
 from lemur.report import lemma_summary_rows
@@ -69,7 +69,9 @@ def compute_tag_stats(entries: list[TraceEntry]) -> dict:
 
 def analyze_nla_solver(entries: list[TraceEntry],
                        lemma_limit: int = 5,
-                       delta_limit: int = 5) -> tuple[list[tuple[str, str]], list[LemmaRecord]]:
+                       delta_limit: int = 5,
+                       varmap: dict[str, str] | None = None,
+                       ) -> tuple[list[tuple[str, str]], list[LemmaRecord]]:
     """Analyze nla_solver trace entries. Returns (rows, lemma_records)."""
     rows = []
     by_func = group_by_function(entries)
@@ -93,7 +95,8 @@ def analyze_nla_solver(entries: list[TraceEntry],
     if lemma_records:
         rows.extend(lemma_summary_rows(lemma_records,
                                        lemma_limit=lemma_limit,
-                                       delta_limit=delta_limit))
+                                       delta_limit=delta_limit,
+                                       varmap=varmap or {}))
 
     # init_to_refine — mons to refine
     if 'init_to_refine' in by_func:
@@ -185,15 +188,18 @@ def build_stats_output(trace_path: str | Path, tags: list[str] | None = None,
                        functions: list[str] | None = None,
                        lemma_limit: int = 5,
                        delta_limit: int = 5,
-                       ) -> tuple[StatsOutput, list[LemmaRecord]]:
+                       ) -> tuple[StatsOutput, list[LemmaRecord], dict[str, str]]:
     """Parse a trace file and build a StatsOutput with per-tag analysis.
 
-    Returns (StatsOutput, lemma_records) — lemma_records may be empty if
-    nla_solver tag is not present or filtered out.
+    Returns (StatsOutput, lemma_records, varmap) — lemma_records may be empty if
+    nla_solver tag is not present or filtered out.  varmap is a dict mapping
+    j-variable names (e.g. 'j25') to SMT expressions (e.g. 'R21').  It is empty
+    when the trace lacks varmap lines (older Z3 builds).
     """
     entries = list(parse_trace(trace_path))
     by_tag = group_by_tag(entries)
     all_lemma_records: list[LemmaRecord] = []
+    varmap: dict[str, str] = {}
 
     out = StatsOutput()
 
@@ -217,8 +223,11 @@ def build_stats_output(trace_path: str | Path, tags: list[str] | None = None,
                 continue
 
         if tag == 'nla_solver':
+            # Collect varmap from all nla_solver entries (before function filter)
+            varmap = collect_varmap(by_tag.get('nla_solver', []))
             rows, lemma_records = analyze_nla_solver(
-                tag_entries, lemma_limit=lemma_limit, delta_limit=delta_limit)
+                tag_entries, lemma_limit=lemma_limit, delta_limit=delta_limit,
+                varmap=varmap)
             all_lemma_records = lemma_records
         else:
             analyzer = TAG_ANALYZERS.get(tag, lambda es: analyze_generic(tag, es))
@@ -226,7 +235,7 @@ def build_stats_output(trace_path: str | Path, tags: list[str] | None = None,
 
         out.add_section(f"[{tag}]", rows)
 
-    return out, all_lemma_records
+    return out, all_lemma_records, varmap
 
 
 def _make_numeric_stats(values: list[float | int]) -> NumericStats:
