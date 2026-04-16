@@ -154,12 +154,24 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         else:
             status = 'error'
 
-        # Handle trace file
-        trace_src = Path(tmpdir) / '.z3-trace'
+        # Save outputs when --save is used
         trace_dest = None
-        if trace_src.exists() and trace_src.stat().st_size > 0 and save_dir:
-            trace_dest = Path(save_dir) / f"{config.name}_s{seed}.trace"
-            shutil.copy2(trace_src, trace_dest)
+        if save_dir:
+            prefix = Path(save_dir) / f"{config.name}_s{seed}"
+
+            # Trace file
+            trace_src = Path(tmpdir) / '.z3-trace'
+            if trace_src.exists() and trace_src.stat().st_size > 0:
+                trace_dest = prefix.with_suffix('.trace')
+                shutil.copy2(trace_src, trace_dest)
+
+            # stdout
+            if proc.stdout.strip():
+                prefix.with_suffix('.stdout').write_text(proc.stdout)
+
+            # stderr
+            if proc.stderr.strip():
+                prefix.with_suffix('.stderr').write_text(proc.stderr)
 
         return RunResult(
             config=config.name,
