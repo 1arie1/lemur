@@ -40,6 +40,8 @@ def main():
                         help='Output format (default: rich for TTY, csv otherwise)')
     parser.add_argument('--no-color', action='store_true',
                         help='Disable color output')
+    parser.add_argument('--no-commands', action='store_true',
+                        help='Hide z3 command lines from output')
 
     args = parser.parse_args()
 
@@ -107,7 +109,7 @@ def main():
     output(table, fmt=fmt, console=console)
 
     # Print command lines for manual re-run
-    if results:
+    if results and not args.no_commands:
         # Show one command per config (seed is easy to change)
         seen_configs = set()
         cmds = []
