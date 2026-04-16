@@ -20,6 +20,7 @@ from lemur.report import (
     render_lemma_detail, render_lemma_detail_plain,
     render_lemma_list_rich, render_lemma_list_plain,
     parse_lemma_ranges, expand_lemma_ranges,
+    humanize_varmap,
 )
 
 
@@ -64,6 +65,9 @@ def main():
         trace_path, tags=args.tag, functions=args.function,
         lemma_limit=args.lemma_limit, delta_limit=args.lemma_delta_limit,
     )
+    # Pre-humanize numbers in varmap so 18446744073709551616 → 2^64 etc.
+    # before truncation destroys them
+    varmap = humanize_varmap(varmap)
     if args.no_varmap:
         varmap = {}
 

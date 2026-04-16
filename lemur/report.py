@@ -82,6 +82,26 @@ def _format_large_int(n: int) -> str | None:
     return f'{n:_}'
 
 
+def humanize_constants_plain(text: str) -> str:
+    """Replace large integer literals with human-friendly plain text.
+
+    No Rich markup — safe for data processing and truncation.
+    """
+    def _repl(m: re.Match) -> str:
+        try:
+            n = int(m.group(1))
+        except ValueError:
+            return m.group(0)
+        h = humanize_number(n)
+        if h:
+            return h
+        dg = _format_large_int(n)
+        if dg:
+            return dg
+        return m.group(0)
+    return _INTEGER_IN_TEXT_RE.sub(_repl, text)
+
+
 def humanize_constants(text: str) -> str:
     """Replace large integer literals with human-friendly Rich-markup forms.
 
@@ -100,6 +120,15 @@ def humanize_constants(text: str) -> str:
             return dg
         return m.group(0)
     return _INTEGER_IN_TEXT_RE.sub(_repl, text)
+
+
+def humanize_varmap(varmap: dict[str, str]) -> dict[str, str]:
+    """Pre-humanize numbers in varmap values.
+
+    Replaces large integers with compact forms (2^64, 2^128, etc.) BEFORE
+    truncation, so expressions like (mod R2 2^64) stay readable.
+    """
+    return {k: humanize_constants_plain(v) for k, v in varmap.items()}
 
 
 def humanize_text(text: str) -> Text:
@@ -354,11 +383,11 @@ def render_lemma_detail(record: LemmaRecord, index: int,
         if var.root and var.root != var.name:
             root_text.stylize('red')
 
-        smt_name = _truncate_smt(vm.get(var.name, '')) if has_varmap else None
+        smt_raw = _truncate_smt(vm.get(var.name, '')) if has_varmap else None
 
         row = [name_text]
         if has_varmap:
-            row.append(smt_name)
+            row.append(humanize_constants(smt_raw) if smt_raw else '')
         row.extend([
             humanize_constants(format_value(var.value)),
             'Y' if var.is_basic else '',
