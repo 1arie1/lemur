@@ -11,6 +11,8 @@ from pathlib import Path
 
 from lemur.parsers import TraceEntry, parse_trace, group_by_tag, group_by_function
 from lemur.table import StatsOutput
+from lemur.lemma import LemmaAnalyzer, LemmaRecord
+from lemur.report import lemma_summary_rows
 
 
 @dataclass
@@ -65,8 +67,10 @@ def compute_tag_stats(entries: list[TraceEntry]) -> dict:
 
 # --- Tag-specific analyzers ---
 
-def analyze_nla_solver(entries: list[TraceEntry]) -> list[tuple[str, str]]:
-    """Analyze nla_solver trace entries."""
+def analyze_nla_solver(entries: list[TraceEntry],
+                       lemma_limit: int = 5,
+                       delta_limit: int = 5) -> tuple[list[tuple[str, str]], list[LemmaRecord]]:
+    """Analyze nla_solver trace entries. Returns (rows, lemma_records)."""
     rows = []
     by_func = group_by_function(entries)
 
@@ -84,19 +88,12 @@ def analyze_nla_solver(entries: list[TraceEntry]) -> list[tuple[str, str]]:
         if call_nums:
             rows.append(("Check calls", f"{len(check_entries)} entries, max call# = {max(call_nums)}"))
 
-    # Lemma builder — extract lemma types
-    if '~lemma_builder' in by_func:
-        lemma_entries = by_func['~lemma_builder']
-        lemma_types = Counter()
-        for e in lemma_entries:
-            first_line = e.body.split('\n')[0].strip() if e.body else ''
-            # e.g. "nla-pseudo-linear 2"
-            parts = first_line.rsplit(' ', 1)
-            if len(parts) >= 1:
-                lemma_types[parts[0]] += 1
-        rows.append(("Lemmas generated", str(len(lemma_entries))))
-        for lt, cnt in lemma_types.most_common():
-            rows.append((f"  {lt}", str(cnt)))
+    # Structured lemma analysis via LemmaAnalyzer
+    lemma_records = list(LemmaAnalyzer(entries).extract())
+    if lemma_records:
+        rows.extend(lemma_summary_rows(lemma_records,
+                                       lemma_limit=lemma_limit,
+                                       delta_limit=delta_limit))
 
     # init_to_refine — mons to refine
     if 'init_to_refine' in by_func:
@@ -118,7 +115,7 @@ def analyze_nla_solver(entries: list[TraceEntry]) -> list[tuple[str, str]]:
         pct = 100 * cnt / len(entries)
         rows.append((f"  {func}", f"{cnt} ({pct:.1f}%)"))
 
-    return rows
+    return rows, lemma_records
 
 
 def analyze_nra(entries: list[TraceEntry]) -> list[tuple[str, str]]:
@@ -185,10 +182,18 @@ def analyze_generic(tag: str, entries: list[TraceEntry]) -> list[tuple[str, str]
 
 
 def build_stats_output(trace_path: str | Path, tags: list[str] | None = None,
-                       functions: list[str] | None = None) -> StatsOutput:
-    """Parse a trace file and build a StatsOutput with per-tag analysis."""
+                       functions: list[str] | None = None,
+                       lemma_limit: int = 5,
+                       delta_limit: int = 5,
+                       ) -> tuple[StatsOutput, list[LemmaRecord]]:
+    """Parse a trace file and build a StatsOutput with per-tag analysis.
+
+    Returns (StatsOutput, lemma_records) — lemma_records may be empty if
+    nla_solver tag is not present or filtered out.
+    """
     entries = list(parse_trace(trace_path))
     by_tag = group_by_tag(entries)
+    all_lemma_records: list[LemmaRecord] = []
 
     out = StatsOutput()
 
@@ -211,11 +216,17 @@ def build_stats_output(trace_path: str | Path, tags: list[str] | None = None,
             if not tag_entries:
                 continue
 
-        analyzer = TAG_ANALYZERS.get(tag, lambda es: analyze_generic(tag, es))
-        rows = analyzer(tag_entries)
+        if tag == 'nla_solver':
+            rows, lemma_records = analyze_nla_solver(
+                tag_entries, lemma_limit=lemma_limit, delta_limit=delta_limit)
+            all_lemma_records = lemma_records
+        else:
+            analyzer = TAG_ANALYZERS.get(tag, lambda es: analyze_generic(tag, es))
+            rows = analyzer(tag_entries)
+
         out.add_section(f"[{tag}]", rows)
 
-    return out
+    return out, all_lemma_records
 
 
 def _make_numeric_stats(values: list[float | int]) -> NumericStats:
