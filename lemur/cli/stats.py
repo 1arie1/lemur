@@ -1,14 +1,4 @@
-#!/usr/bin/env python3
-"""
-lemur-stats: Structured trace log analyzer.
-
-Usage:
-  lemur-stats trace.log
-  lemur-stats trace.log --tag nla_solver
-  lemur-stats trace.log --lemma-detail 3
-  lemur-stats trace.log --lemma-details 1:5
-  lemur-stats trace.log --function check --format json
-"""
+"""lemur-stats: Structured trace log analyzer."""
 
 import argparse
 import sys
@@ -35,7 +25,7 @@ def main():
     parser.add_argument('--function', '--fn', action='append', default=None,
                         help='Filter to specific function(s). Repeatable.')
     parser.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
-                        help='Output format (default: rich for TTY, csv otherwise)')
+                        help='Output format (default: rich for TTY, plain otherwise)')
     parser.add_argument('--no-color', action='store_true',
                         help='Disable color output')
 
@@ -112,7 +102,3 @@ def main():
                 print(render_lemma_detail_plain(lemma_records[i], idx, varmap=varmap))
     elif detail_indices and not lemma_records:
         print("No lemma records found (is nla_solver tag present?)", file=sys.stderr)
-
-
-if __name__ == '__main__':
-    main()

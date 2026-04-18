@@ -1,11 +1,19 @@
 # Lemur tools — for agents
 
-Z3 trace analysis. Two tools. Run with `python3`.
+Z3 trace analysis. Two tools. Install in venv, use as commands.
+
+## setup
+
+```
+cd ~/ag/lemur && source .venv/bin/activate
+```
+
+If venv missing: `python3 -m venv .venv && source .venv/bin/activate && pip install -e '.[dev]'`
 
 ## lemur-sweep: run z3 across seeds/configs
 
 ```
-python3 ~/ag/lemur/lemur-sweep.py BENCH.smt2 --seeds 0-15 --timeout 30 \
+lemur-sweep BENCH.smt2 --seeds 0-15 --timeout 30 \
   --config "name: key=val key=val" \
   -j 4 -f plain --save DIR
 ```
@@ -28,13 +36,13 @@ baseline,0,sat,1.234
 ## lemur-stats: analyze .z3-trace files
 
 ```
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --tag nla_solver
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --lemma-list
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --lemma-list -f plain
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --lemma-detail 3
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --lemma-details 1:5
-python3 ~/ag/lemur/lemur-stats.py TRACE_FILE --no-varmap --lemma-detail 3
+lemur-stats TRACE_FILE
+lemur-stats TRACE_FILE --tag nla_solver
+lemur-stats TRACE_FILE --lemma-list
+lemur-stats TRACE_FILE --lemma-list -f plain
+lemur-stats TRACE_FILE --lemma-detail 3
+lemur-stats TRACE_FILE --lemma-details 1:5
+lemur-stats TRACE_FILE --no-varmap --lemma-detail 3
 ```
 
 - parses `-------- [TAG] func file:line ---------` blocks
@@ -59,8 +67,9 @@ tags: `nla_solver`, `nra`, `nlsat_*`. defined in `z3-edge/src/util/trace_tags.de
 
 ## typical agent workflow
 
-1. sweep to find interesting seeds: `lemur-sweep.py bench.smt2 --seeds 0-15 --timeout 30 -f plain`
-2. re-run interesting case with tracing: `lemur-sweep.py bench.smt2 --seeds 3 --timeout 60 --trace nla_solver --save ./out`
-3. analyze trace: `lemur-stats.py ./out/default_s3.trace`
-4. list all lemmas: `lemur-stats.py ./out/default_s3.trace --lemma-list -f plain`
-5. inspect specific lemma: `lemur-stats.py ./out/default_s3.trace --lemma-detail 1`
+1. activate: `cd ~/ag/lemur && source .venv/bin/activate`
+2. sweep to find interesting seeds: `lemur-sweep bench.smt2 --seeds 0-15 --timeout 30 -f plain`
+3. re-run interesting case with tracing: `lemur-sweep bench.smt2 --seeds 3 --timeout 60 --trace nla_solver --save ./out`
+4. analyze trace: `lemur-stats ./out/default_s3.trace`
+5. list all lemmas: `lemur-stats ./out/default_s3.trace --lemma-list -f plain`
+6. inspect specific lemma: `lemur-stats ./out/default_s3.trace --lemma-detail 1`

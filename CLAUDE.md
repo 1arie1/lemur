@@ -1,14 +1,35 @@
 # Lemur development notes
 
+## setup
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+This installs `lemur-sweep` and `lemur-stats` as commands in the venv.
+
 ## repo layout
 
-Flat python package. CLIs are `lemur-sweep.py`, `lemur-stats.py` at root.
-Shared code in `lemur/` package. Tests and sample traces in `tests/sample_traces/`.
+```
+pyproject.toml              project config, deps, entry points
+lemur/
+  __init__.py
+  cli/
+    __init__.py
+    sweep.py                lemur-sweep entry point
+    stats.py                lemur-stats entry point
+  parsers.py                trace block parser + varmap
+  sweep.py                  sweep engine (subprocess pool, temp dirs)
+  table.py                  Rich/plain/JSON output formatting
+  stats.py                  per-tag statistics computation
+  lemma.py                  ~lemma_builder structured parser
+  report.py                 lemma rendering, humanization, strategy names
+tests/sample_traces/        sample trace files for testing
+```
 
-## dependencies
-
-Only external dep: `rich`. Listed in `requirements.txt`.
-Venv at `.venv/`. System install also works via `python3 -m pip install --user --break-system-packages rich`.
+Entry points defined in `pyproject.toml` under `[project.scripts]`.
+CLI code in `lemur/cli/`, library code in `lemur/`.
 
 ## z3
 
@@ -31,6 +52,6 @@ AST trace log (`z3.log`): line-oriented `[event-type] data`. Enabled by `trace=t
 ## conventions
 
 - Use `python3 -m pip`, not `pip3` (multiple python envs on this machine)
-- Output: Rich for TTY, CSV when piped. All tools support `-f csv|json|rich`
+- Output: Rich for TTY, plain when piped. All tools support `-f plain|json|rich`
 - Parsers are modular by tag. Adding a new CTRACE tag = new analyzer function in `stats.py`
 - Lemma analysis lives in `lemma.py` (parsing) and `report.py` (rendering)

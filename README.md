@@ -10,10 +10,10 @@ text parsing.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-python3 -m pip install -r requirements.txt
+pip install -e '.[dev]'
 ```
 
-Or install system-wide: `python3 -m pip install --user --break-system-packages rich`
+This installs `lemur-sweep` and `lemur-stats` as commands in the venv.
 
 ## 🔧 Tools
 
@@ -24,10 +24,10 @@ table. Each run uses an isolated temp directory for trace file safety.
 
 ```bash
 # Basic sweep
-python3 ~/ag/lemur/lemur-sweep.py problem.smt2 --seeds 0-15 --timeout 30
+lemur-sweep problem.smt2 --seeds 0-15 --timeout 30
 
 # Multiple configs, parallel, with trace capture
-python3 ~/ag/lemur/lemur-sweep.py problem.smt2 --seeds 0-15 --timeout 30 \
+lemur-sweep problem.smt2 --seeds 0-15 --timeout 30 \
   --config "baseline:" \
   --config "inc1: smt.arith.nl.nra_incremental=1" \
   --config "inc2: smt.arith.nl.nra_incremental=2 smt.arith.nl.nra_max_conflicts=1000" \
@@ -63,25 +63,25 @@ analysis for `nla_solver` and `nra`.
 
 ```bash
 # Summary of a trace file
-python3 ~/ag/lemur/lemur-stats.py .z3-trace
+lemur-stats .z3-trace
 
 # Filter to specific tag
-python3 ~/ag/lemur/lemur-stats.py .z3-trace --tag nla_solver
+lemur-stats .z3-trace --tag nla_solver
 
 # List all lemmas, one per line
-python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-list
+lemur-stats .z3-trace --lemma-list
 
 # Show detailed variable table for lemma #3
-python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-detail 3
+lemur-stats .z3-trace --lemma-detail 3
 
 # Show details for lemmas 1 through 5
-python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-details 1:5
+lemur-stats .z3-trace --lemma-details 1:5
 
 # Machine-readable output
-python3 ~/ag/lemur/lemur-stats.py .z3-trace -f json
+lemur-stats .z3-trace -f json
 
 # Ignore varmap, show raw j-variables
-python3 ~/ag/lemur/lemur-stats.py .z3-trace --lemma-detail 3 --no-varmap
+lemur-stats .z3-trace --lemma-detail 3 --no-varmap
 ```
 
 **Lemma analysis** (for `~lemma_builder` entries in `nla_solver` tag):
@@ -117,14 +117,16 @@ all-or-nothing with no per-event filtering.
 ## 🌿 Architecture
 
 ```
-lemur-sweep.py          CLI entry point
-lemur-stats.py          CLI entry point
+pyproject.toml              Project config, deps, entry points
 lemur/
-  parsers.py            Trace block parser (header/body/footer) + varmap
-  sweep.py              Sweep engine (subprocess pool, temp dirs)
-  table.py              Rich/plain/JSON output formatting
-  stats.py              Per-tag statistics computation
-  lemma.py              ~lemma_builder structured parser
-  report.py             Lemma rendering, humanization, strategy names
-tests/sample_traces/    Sample trace files for testing
+  cli/
+    sweep.py                lemur-sweep entry point
+    stats.py                lemur-stats entry point
+  parsers.py                Trace block parser (header/body/footer) + varmap
+  sweep.py                  Sweep engine (subprocess pool, temp dirs)
+  table.py                  Rich/plain/JSON output formatting
+  stats.py                  Per-tag statistics computation
+  lemma.py                  ~lemma_builder structured parser
+  report.py                 Lemma rendering, humanization, strategy names
+tests/sample_traces/        Sample trace files for testing
 ```

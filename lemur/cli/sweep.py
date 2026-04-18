@@ -1,16 +1,12 @@
-#!/usr/bin/env python3
-"""
-lemur-sweep: Run Z3 on a benchmark across seeds and configurations.
-
-Usage:
-  lemur-sweep benchmark.smt2 --seeds 0-15 --timeout 30 \
-    --config "baseline: smt.arith.nl.nra_incremental=0" \
-    --config "mode1: smt.arith.nl.nra_incremental=1"
-"""
+"""lemur-sweep: Run Z3 on a benchmark across seeds and configurations."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
+
+from rich.panel import Panel
+from rich.text import Text
 
 from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
@@ -41,7 +37,7 @@ def main():
     parser.add_argument('--save', default=None,
                         help='Directory to save raw outputs and traces')
     parser.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
-                        help='Output format (default: rich for TTY, csv otherwise)')
+                        help='Output format (default: rich for TTY, plain otherwise)')
     parser.add_argument('--no-color', action='store_true',
                         help='Disable color output')
     parser.add_argument('--no-commands', action='store_true',
@@ -130,7 +126,6 @@ def main():
                 cmds.append((r.config, r.cmdline))
 
         if fmt == 'json':
-            import json
             cmd_data = {config: cmdline for config, cmdline in cmds}
             print(json.dumps({"commands": cmd_data}, indent=2))
         elif fmt == 'plain':
@@ -141,8 +136,6 @@ def main():
         else:
             if console:
                 console.print()
-                from rich.panel import Panel
-                from rich.text import Text
                 lines = Text()
                 for i, (config, cmdline) in enumerate(cmds):
                     if i > 0:
@@ -151,7 +144,3 @@ def main():
                     lines.append(cmdline)
                 console.print(Panel(lines, title="Commands (change seeds to re-run)",
                                     expand=False))
-
-
-if __name__ == '__main__':
-    main()
