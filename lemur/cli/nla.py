@@ -1,0 +1,183 @@
+"""lemur nla: NLA solver lemma analysis."""
+
+import sys
+from pathlib import Path
+
+from lemur.parsers import parse_trace, group_by_tag, collect_varmap
+from lemur.lemma import LemmaAnalyzer
+from lemur.table import make_console
+from lemur.report import (
+    lemma_summary_rows,
+    render_lemma_detail, render_lemma_detail_plain,
+    render_lemma_list_rich, render_lemma_list_plain,
+    parse_lemma_ranges, expand_lemma_ranges,
+    humanize_varmap, humanize_constants,
+)
+
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text as RichText
+
+
+def register(subparsers):
+    p = subparsers.add_parser('nla', help='NLA solver lemma analysis',
+                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
+    p.add_argument('trace', help='Path to .z3-trace file')
+    p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
+                   help='Output format (default: rich for TTY, plain otherwise)')
+    p.add_argument('--no-color', action='store_true',
+                   help='Disable color output')
+    p.add_argument('--no-varmap', action='store_true',
+                   help='Show raw LP j-variables instead of SMT names')
+
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--list', '-l', action='store_true',
+                      help='List all lemmas, one per line')
+    mode.add_argument('--detail', '-d', type=int, default=None, metavar='N',
+                      help='Show full variable table for Nth lemma (1-based)')
+    mode.add_argument('--details', type=str, default=None, metavar='RANGE',
+                      help='Show detail for lemma ranges: 3, 5:10, 2-4, :5, 12:')
+
+    p.add_argument('--limit', type=int, default=5,
+                   help='Number of lemma previews in summary (default: 5)')
+    p.add_argument('--delta-limit', type=int, default=5,
+                   help='Max variable change lines in summary (default: 5)')
+    p.set_defaults(func=run)
+
+
+def run(args):
+    trace_path = Path(args.trace)
+    if not trace_path.exists():
+        print(f"Error: trace file not found: {trace_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse trace, filter to nla_solver tag
+    entries = list(parse_trace(trace_path))
+    by_tag = group_by_tag(entries)
+    nla_entries = by_tag.get('nla_solver', [])
+
+    if not nla_entries:
+        print("No nla_solver entries found in trace.", file=sys.stderr)
+        sys.exit(1)
+
+    # Extract varmap and lemmas
+    varmap = humanize_varmap(collect_varmap(nla_entries))
+    if args.no_varmap:
+        varmap = {}
+
+    lemma_records = list(LemmaAnalyzer(nla_entries).extract())
+
+    fmt = args.format
+    use_rich = fmt is None or fmt == 'rich'
+    console = make_console(no_color=args.no_color) if use_rich else None
+
+    # Determine mode
+    if args.list:
+        _render_list(lemma_records, fmt, console, varmap)
+    elif args.detail is not None:
+        _render_details([args.detail], lemma_records, fmt, console, varmap)
+    elif args.details is not None:
+        ranges = parse_lemma_ranges(args.details)
+        indices = expand_lemma_ranges(ranges, len(lemma_records))
+        _render_details(indices, lemma_records, fmt, console, varmap)
+    else:
+        _render_summary(nla_entries, lemma_records, fmt, console, varmap,
+                        args.limit, args.delta_limit)
+
+
+def _render_list(lemma_records, fmt, console, varmap):
+    if not lemma_records:
+        print("No lemmas found.", file=sys.stderr)
+        return
+    if console and (fmt is None or fmt == 'rich'):
+        render_lemma_list_rich(lemma_records, console, varmap=varmap)
+    else:
+        print(render_lemma_list_plain(lemma_records, varmap=varmap))
+
+
+def _render_details(indices, lemma_records, fmt, console, varmap):
+    if not lemma_records:
+        print("No lemmas found.", file=sys.stderr)
+        return
+    for idx in indices:
+        i = idx - 1
+        if i < 0 or i >= len(lemma_records):
+            print(f"[warn] lemma {idx} out of range (1-{len(lemma_records)})",
+                  file=sys.stderr)
+            continue
+        if console and (fmt is None or fmt == 'rich'):
+            if idx != indices[0]:
+                console.print()
+            render_lemma_detail(lemma_records[i], idx, console, varmap=varmap)
+        else:
+            if idx != indices[0]:
+                print()
+            print(render_lemma_detail_plain(lemma_records[i], idx, varmap=varmap))
+
+
+def _render_summary(nla_entries, lemma_records, fmt, console, varmap,
+                    limit, delta_limit):
+    """Show nla_solver overview: entry counts + lemma summary."""
+    from collections import Counter
+    import re
+    from lemur.parsers import group_by_function
+
+    by_func = group_by_function(nla_entries)
+
+    rows = []
+    rows.append(('nla_solver entries', str(len(nla_entries))))
+    rows.append(('Unique functions', str(len(by_func))))
+
+    # Check calls
+    if 'check' in by_func:
+        check_entries = by_func['check']
+        call_nums = []
+        for e in check_entries:
+            m = re.search(r'calls\s*=\s*(\d+)', e.body)
+            if m:
+                call_nums.append(int(m.group(1)))
+        if call_nums:
+            rows.append(('Check calls', f'{len(check_entries)} entries, max call# = {max(call_nums)}'))
+
+    # init_to_refine
+    if 'init_to_refine' in by_func:
+        mon_counts = []
+        for e in by_func['init_to_refine']:
+            m = re.search(r'(\d+)\s+mons?\s+to\s+refine', e.body)
+            if m:
+                mon_counts.append(int(m.group(1)))
+        if mon_counts:
+            mn, mx = min(mon_counts), max(mon_counts)
+            avg = sum(mon_counts) / len(mon_counts)
+            rows.append(('Monomials to refine', f'min={mn} avg={avg:.1f} max={mx} (n={len(mon_counts)})'))
+
+    # Lemma summary
+    if lemma_records:
+        rows.append(('', ''))
+        rows.extend(lemma_summary_rows(lemma_records, lemma_limit=limit,
+                                       delta_limit=delta_limit, varmap=varmap))
+
+    # Top functions
+    func_counts = Counter(e.function for e in nla_entries)
+    rows.append(('', ''))
+    rows.append(('Top functions', ''))
+    for func, cnt in func_counts.most_common(10):
+        pct = 100 * cnt / len(nla_entries)
+        rows.append((f'  {func}', f'{cnt} ({pct:.1f}%)'))
+
+    if console and (fmt is None or fmt == 'rich'):
+        table = Table(show_header=False, box=None, pad_edge=False, padding=(0, 2))
+        table.add_column('Key', style='bold')
+        table.add_column('Value')
+        for key, value in rows:
+            table.add_row(key, value)
+        panel_title = RichText('nla_solver', style='bold')
+        console.print(Panel(table, title=panel_title, expand=False))
+    else:
+        for key, value in rows:
+            if key and value:
+                print(f'{key}: {value}')
+            elif key:
+                print(key)
+            elif value:
+                print(f'  {value}')
