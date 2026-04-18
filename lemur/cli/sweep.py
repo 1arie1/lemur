@@ -12,7 +12,8 @@ from lemur.table import output, make_console
 
 
 def register(subparsers):
-    p = subparsers.add_parser('sweep', help='Run Z3 across seeds and configurations')
+    p = subparsers.add_parser('sweep', help='Run Z3 across seeds and configurations',
+                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
     p.add_argument('benchmark', help='SMT2 benchmark file')
     p.add_argument('--seeds', default='0-3',
                    help='Seed range: 0-15, 1,3,5, or 0-3,7 (default: 0-3)')

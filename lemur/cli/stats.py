@@ -14,7 +14,8 @@ from lemur.report import (
 
 
 def register(subparsers):
-    p = subparsers.add_parser('stats', help='Analyze Z3 trace files')
+    p = subparsers.add_parser('stats', help='Analyze Z3 trace files',
+                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
     p.add_argument('trace', help='Path to .z3-trace file')
     p.add_argument('--tag', action='append', default=None,
                    help='Filter to specific tag(s). Repeatable.')
