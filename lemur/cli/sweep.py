@@ -1,6 +1,5 @@
-"""lemur-sweep: Run Z3 on a benchmark across seeds and configurations."""
+"""lemur sweep: Run Z3 on a benchmark across seeds and configurations."""
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -12,39 +11,37 @@ from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog='lemur-sweep',
-        description='Run Z3 across seeds and configurations, collect results.',
-    )
-    parser.add_argument('benchmark', help='SMT2 benchmark file')
-    parser.add_argument('--seeds', default='0-3',
-                        help='Seed range: 0-15, 1,3,5, or 0-3,7 (default: 0-3)')
-    parser.add_argument('--timeout', type=int, default=30,
-                        help='Timeout per run in seconds (default: 30)')
-    parser.add_argument('--config', action='append', default=[],
-                        help='Config spec: "name: key=val key=val". Repeatable.')
-    parser.add_argument('--z3', default=None,
-                        help='Path to z3 binary (default: ~/ag/z3/z3-edge/build/z3)')
-    parser.add_argument('--jobs', '-j', type=int, default=1,
-                        help='Parallel jobs (default: 1)')
-    parser.add_argument('--trace', default=None,
-                        help='Comma-separated trace tags to enable (e.g., nla_solver,nra)')
-    parser.add_argument('--verbosity', type=int, default=2,
-                        help='Z3 verbosity level, -v:N (default: 2, 0 to disable)')
-    parser.add_argument('--z3-log', action='store_true',
-                        help='Enable z3 AST trace log (trace=true). Requires --save.')
-    parser.add_argument('--save', default=None,
-                        help='Directory to save raw outputs and traces')
-    parser.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
-                        help='Output format (default: rich for TTY, plain otherwise)')
-    parser.add_argument('--no-color', action='store_true',
-                        help='Disable color output')
-    parser.add_argument('--no-commands', action='store_true',
-                        help='Hide z3 command lines from output')
+def register(subparsers):
+    p = subparsers.add_parser('sweep', help='Run Z3 across seeds and configurations')
+    p.add_argument('benchmark', help='SMT2 benchmark file')
+    p.add_argument('--seeds', default='0-3',
+                   help='Seed range: 0-15, 1,3,5, or 0-3,7 (default: 0-3)')
+    p.add_argument('--timeout', type=int, default=30,
+                   help='Timeout per run in seconds (default: 30)')
+    p.add_argument('--config', action='append', default=[],
+                   help='Config spec: "name: key=val key=val". Repeatable.')
+    p.add_argument('--z3', default=None,
+                   help='Path to z3 binary (default: ~/ag/z3/z3-edge/build/z3)')
+    p.add_argument('--jobs', '-j', type=int, default=1,
+                   help='Parallel jobs (default: 1)')
+    p.add_argument('--trace', default=None,
+                   help='Comma-separated trace tags to enable (e.g., nla_solver,nra)')
+    p.add_argument('--verbosity', type=int, default=2,
+                   help='Z3 verbosity level, -v:N (default: 2, 0 to disable)')
+    p.add_argument('--z3-log', action='store_true',
+                   help='Enable z3 AST trace log (trace=true). Requires --save.')
+    p.add_argument('--save', default=None,
+                   help='Directory to save raw outputs and traces')
+    p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
+                   help='Output format (default: rich for TTY, plain otherwise)')
+    p.add_argument('--no-color', action='store_true',
+                   help='Disable color output')
+    p.add_argument('--no-commands', action='store_true',
+                   help='Hide z3 command lines from output')
+    p.set_defaults(func=run)
 
-    args = parser.parse_args()
 
+def run(args):
     # Resolve benchmark path
     benchmark = Path(args.benchmark).resolve()
     if not benchmark.exists():
@@ -87,7 +84,7 @@ def main():
     console = make_console(no_color=args.no_color) if fmt != 'plain' and fmt != 'json' else None
 
     if show_progress and console:
-        console.print(f"[bold]lemur-sweep[/bold] {benchmark.name}")
+        console.print(f"[bold]lemur sweep[/bold] {benchmark.name}")
         console.print(f"  z3: {z3_bin}")
         console.print(f"  seeds: {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
         console.print(f"  configs: {', '.join(c.name for c in configs)}")
@@ -117,7 +114,6 @@ def main():
 
     # Print command lines for manual re-run
     if results and not args.no_commands:
-        # Show one command per config (seed is easy to change)
         seen_configs = set()
         cmds = []
         for r in results:

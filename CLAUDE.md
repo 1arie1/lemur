@@ -7,7 +7,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-This installs `lemur-sweep` and `lemur-stats` as commands in the venv.
+This installs `lemur` as a command in the venv with subcommands `sweep` and `stats`.
 
 ## repo layout
 
@@ -17,8 +17,9 @@ lemur/
   __init__.py
   cli/
     __init__.py
-    sweep.py                lemur-sweep entry point
-    stats.py                lemur-stats entry point
+    main.py                 lemur entry point (subcommand dispatch)
+    sweep.py                lemur sweep subcommand
+    stats.py                lemur stats subcommand
   parsers.py                trace block parser + varmap
   sweep.py                  sweep engine (subprocess pool, temp dirs)
   table.py                  Rich/plain/JSON output formatting
@@ -28,8 +29,10 @@ lemur/
 tests/sample_traces/        sample trace files for testing
 ```
 
-Entry points defined in `pyproject.toml` under `[project.scripts]`.
-CLI code in `lemur/cli/`, library code in `lemur/`.
+Single entry point `lemur` defined in `pyproject.toml`. Subcommands registered
+via `register(subparsers)` pattern in `lemur/cli/sweep.py` and `lemur/cli/stats.py`.
+To add a new subcommand: create `lemur/cli/foo.py` with `register()` and `run()`,
+import and register in `main.py`.
 
 ## z3
 

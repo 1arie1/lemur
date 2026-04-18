@@ -17,8 +17,7 @@ dev = [
 ]
 
 [project.scripts]
-lemur-sweep = "lemur.cli.sweep:main"
-lemur-stats = "lemur.cli.stats:main"
+lemur = "lemur.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["lemur*"]

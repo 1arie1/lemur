@@ -13,21 +13,21 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-This installs `lemur-sweep` and `lemur-stats` as commands in the venv.
+This installs `lemur` as a command in the venv with subcommands `sweep` and `stats`.
 
 ## 🔧 Tools
 
-### 🌀 lemur-sweep — Seed/config sweep runner
+### 🌀 lemur sweep — Seed/config sweep runner
 
 Run Z3 on a benchmark across seeds and configurations, collect results in a
 table. Each run uses an isolated temp directory for trace file safety.
 
 ```bash
 # Basic sweep
-lemur-sweep problem.smt2 --seeds 0-15 --timeout 30
+lemur sweep problem.smt2 --seeds 0-15 --timeout 30
 
 # Multiple configs, parallel, with trace capture
-lemur-sweep problem.smt2 --seeds 0-15 --timeout 30 \
+lemur sweep problem.smt2 --seeds 0-15 --timeout 30 \
   --config "baseline:" \
   --config "inc1: smt.arith.nl.nra_incremental=1" \
   --config "inc2: smt.arith.nl.nra_incremental=2 smt.arith.nl.nra_max_conflicts=1000" \
@@ -56,32 +56,32 @@ Output includes copy-pasteable z3 command lines for manual re-run
 - `--z3-log` — enable AST trace log (`trace=true`), requires `--save`
 - `--format plain|json|rich` — output format (auto-detects TTY)
 
-### 🔍 lemur-stats — Trace file analyzer
+### 🔍 lemur stats — Trace file analyzer
 
 Parse `.z3-trace` files and display structured statistics with tag-specific
 analysis for `nla_solver` and `nra`.
 
 ```bash
 # Summary of a trace file
-lemur-stats .z3-trace
+lemur stats .z3-trace
 
 # Filter to specific tag
-lemur-stats .z3-trace --tag nla_solver
+lemur stats .z3-trace --tag nla_solver
 
 # List all lemmas, one per line
-lemur-stats .z3-trace --lemma-list
+lemur stats .z3-trace --lemma-list
 
 # Show detailed variable table for lemma #3
-lemur-stats .z3-trace --lemma-detail 3
+lemur stats .z3-trace --lemma-detail 3
 
 # Show details for lemmas 1 through 5
-lemur-stats .z3-trace --lemma-details 1:5
+lemur stats .z3-trace --lemma-details 1:5
 
 # Machine-readable output
-lemur-stats .z3-trace -f json
+lemur stats .z3-trace -f json
 
 # Ignore varmap, show raw j-variables
-lemur-stats .z3-trace --lemma-detail 3 --no-varmap
+lemur stats .z3-trace --lemma-detail 3 --no-varmap
 ```
 
 **Lemma analysis** (for `~lemma_builder` entries in `nla_solver` tag):
@@ -111,7 +111,7 @@ Relevant tags: `nla_solver` (and variants like `nla_solver_details`), `nra`,
 `nlsat_*`. Tags are defined in `src/util/trace_tags.def`.
 
 Z3 also has a second trace mechanism (`trace=true`, output to `z3.log`) that
-logs AST construction events. Captured with `--z3-log` in lemur-sweep. This is
+logs AST construction events. Captured with `--z3-log` in lemur sweep. This is
 all-or-nothing with no per-event filtering.
 
 ## 🌿 Architecture
@@ -120,8 +120,9 @@ all-or-nothing with no per-event filtering.
 pyproject.toml              Project config, deps, entry points
 lemur/
   cli/
-    sweep.py                lemur-sweep entry point
-    stats.py                lemur-stats entry point
+    main.py                 lemur entry point (subcommand dispatch)
+    sweep.py                lemur sweep subcommand
+    stats.py                lemur stats subcommand
   parsers.py                Trace block parser (header/body/footer) + varmap
   sweep.py                  Sweep engine (subprocess pool, temp dirs)
   table.py                  Rich/plain/JSON output formatting
