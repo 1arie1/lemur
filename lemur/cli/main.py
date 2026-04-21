@@ -29,6 +29,12 @@ lemur nla TRACE
   lemur nla TRACE --detail N     full variable table for Nth lemma
   lemur nla TRACE --details 1:5  range of lemmas
   lemur nla TRACE --no-varmap    show raw j-variables instead of SMT names
+  filters (compose; renumber from 1):
+    --strategy SUB       keep lemmas whose strategy contains SUB (repeatable)
+    --min-vars N         keep lemmas with >= N variables
+    --min-preconds N     keep lemmas with >= N preconditions
+    --min-monomials N    keep lemmas with >= N monomials
+    --top-by FIELD --top-n N   sort by {vars,preconds,monomials} desc, keep top N
 
 workflow:
 1. lemur sweep bench.smt2 --seeds 0-15 --timeout 30 --tally -f plain > out.csv

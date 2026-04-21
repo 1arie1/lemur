@@ -42,7 +42,51 @@ def register(subparsers):
                    help='Number of lemma previews in summary (default: 5)')
     p.add_argument('--delta-limit', type=int, default=5,
                    help='Max variable change lines in summary (default: 5)')
+
+    # Filters (apply to list/detail/details/summary modes consistently; filtered
+    # results are renumbered from 1).
+    p.add_argument('--strategy', action='append', default=[], metavar='SUBSTR',
+                   help='Keep lemmas whose strategy contains SUBSTR (case-insensitive). '
+                        'Repeatable: matches any.')
+    p.add_argument('--min-vars', type=int, default=None, metavar='N',
+                   help='Keep lemmas with >= N variables')
+    p.add_argument('--min-preconds', type=int, default=None, metavar='N',
+                   help='Keep lemmas with >= N preconditions')
+    p.add_argument('--min-monomials', type=int, default=None, metavar='N',
+                   help='Keep lemmas with >= N monomials')
+    p.add_argument('--top-by', choices=['vars', 'preconds', 'monomials'],
+                   default=None, metavar='FIELD',
+                   help='Sort descending by this field; use with --top-n')
+    p.add_argument('--top-n', type=int, default=None, metavar='N',
+                   help='Limit to top N after --top-by sort')
     p.set_defaults(func=run)
+
+
+def _apply_filters(records, *, strategies, min_vars, min_preconds,
+                   min_monomials, top_by, top_n):
+    """Filter lemma records by strategy / size thresholds, then optionally
+    sort-and-truncate by a field."""
+    out = records
+    if strategies:
+        subs = [s.lower() for s in strategies]
+        out = [r for r in out
+               if r.strategy and any(s in r.strategy.lower() for s in subs)]
+    if min_vars is not None:
+        out = [r for r in out if len(r.variables) >= min_vars]
+    if min_preconds is not None:
+        out = [r for r in out if len(r.preconditions) >= min_preconds]
+    if min_monomials is not None:
+        out = [r for r in out if len(r.monomials) >= min_monomials]
+    if top_by is not None:
+        key_fn = {
+            'vars': lambda r: len(r.variables),
+            'preconds': lambda r: len(r.preconditions),
+            'monomials': lambda r: len(r.monomials),
+        }[top_by]
+        out = sorted(out, key=key_fn, reverse=True)
+        if top_n is not None:
+            out = out[:top_n]
+    return out
 
 
 def run(args):
@@ -66,6 +110,25 @@ def run(args):
         varmap = {}
 
     lemma_records = list(LemmaAnalyzer(nla_entries).extract())
+
+    # Apply filters (affects all modes). Warn on --top-n without --top-by and
+    # vice versa since they're meant to be used together.
+    if args.top_n is not None and args.top_by is None:
+        print("Warning: --top-n has no effect without --top-by", file=sys.stderr)
+    total_before = len(lemma_records)
+    lemma_records = _apply_filters(
+        lemma_records,
+        strategies=args.strategy,
+        min_vars=args.min_vars,
+        min_preconds=args.min_preconds,
+        min_monomials=args.min_monomials,
+        top_by=args.top_by,
+        top_n=args.top_n,
+    )
+    filtered = len(lemma_records) != total_before
+    if filtered:
+        print(f"[filter] {len(lemma_records)}/{total_before} lemmas match",
+              file=sys.stderr)
 
     fmt = args.format
     use_rich = fmt is None or fmt == 'rich'
