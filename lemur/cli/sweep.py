@@ -81,9 +81,14 @@ def register(subparsers):
     p.add_argument('--tally', action='store_true',
                    help='Print per-config aggregation after results')
     p.add_argument('--stop-on', choices=['sat', 'unsat'], default=None,
-                   help='Abort sweep on first run matching this status')
+                   help='Abort the whole sweep on first run matching this status')
+    p.add_argument('--stop-on-per-split', choices=['sat', 'unsat'], default=None,
+                   help='Scope --stop-on to each split: close a split on its first '
+                        'matching run, then skip remaining runs for that split only. '
+                        'Requires --split. Incompatible with --stop-on.')
     p.add_argument('--fail-fast', action='store_true',
-                   help='Abort sweep on first timeout/unknown/error')
+                   help='Abort sweep on first timeout/unknown/error '
+                        '(composes with --stop-on-per-split)')
     p.set_defaults(func=run)
 
 
@@ -156,6 +161,19 @@ def run(args):
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
+    # Validate --stop-on-per-split early, before any stdout header is written.
+    # Requires --split; incompatible with --stop-on; composes with --fail-fast.
+    if args.stop_on_per_split:
+        if not splits:
+            print("Error: --stop-on-per-split requires --split",
+                  file=sys.stderr)
+            sys.exit(2)
+        if args.stop_on:
+            print("Error: --stop-on-per-split cannot be combined with --stop-on "
+                  "(use --fail-fast for global infrastructure aborts).",
+                  file=sys.stderr)
+            sys.exit(2)
+
     # Parse trace tags
     trace_tags = None
     if args.trace:
@@ -203,7 +221,7 @@ def run(args):
                                  f"{r.time_s:.3f}"])
                 sys.stdout.flush()
 
-    # Build the early-termination predicate.
+    # Build the early-termination predicates.
     stop_when = None
     if args.stop_on or args.fail_fast:
         fail_statuses = {'timeout', 'unknown', 'error'} if args.fail_fast else set()
@@ -211,6 +229,13 @@ def run(args):
 
         def stop_when(r):
             return r.status == target or r.status in fail_statuses
+
+    stop_per_split_when = None
+    if args.stop_on_per_split:
+        per_target = args.stop_on_per_split
+
+        def stop_per_split_when(r):
+            return r.status == per_target
 
     table, results = run_sweep(
         z3_bin=z3_bin,
@@ -228,6 +253,7 @@ def run(args):
         stop_when=stop_when,
         stats=args.stats,
         splits=splits,
+        stop_per_split_when=stop_per_split_when,
     )
 
     if show_progress and console:

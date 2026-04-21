@@ -54,7 +54,14 @@ lemur sweep BENCH.smt2 --seeds 0-15 --timeout 30
                                 prints per-split closure summary
   execution:
     -j N|auto                   parallel jobs (auto = os.cpu_count())
-    --stop-on sat|unsat         abort on first matching result
+    --stop-on sat|unsat         abort whole sweep on first matching result
+    --stop-on-per-split sat|unsat
+                                scope --stop-on to each split: close a split
+                                on its first matching run, skip that split's
+                                remaining runs, continue others. requires
+                                --split; incompatible with --stop-on;
+                                composes with --fail-fast. the canonical
+                                UNSAT-by-decomposition loop.
     --fail-fast                 abort on first timeout/unknown/error
   output:
     --tally                     per-config aggregation after CSV
@@ -131,8 +138,11 @@ workflows:
   lemur sweep bench.smt2 --seeds 0-15 --timeout 30 --tally -f plain > out.csv
   lemur tally out.csv
 
-# case-split investigation (prove disjunction UNSAT)
-  lemur sweep bench.smt2 --seeds 0-7 --timeout 30 --split 'BLK25:(assert BLK__25)' --split 'BLK26:(assert BLK__26)' --stop-on unsat -f plain
+# case-split UNSAT-proof by decomposition (close every split independently)
+# --stop-on-per-split unsat: each split runs until one seed UNSATs, then skips
+# remaining seeds for that split only; other splits keep running. tally shows
+# whether the disjunction is fully closed.
+  lemur sweep bench.smt2 --seeds 0-15 --timeout 30 --split 'BLK25:(assert BLK__25)' --split 'BLK26:(assert BLK__26)' --stop-on-per-split unsat --tally -f plain
 
 # config A vs B on stats counters
   lemur sweep bench.smt2 --seeds 0-7 --timeout 30 --stats --save ./out --config 'A: smt.arith.solver=2' --config 'B: smt.arith.solver=6'

@@ -6,6 +6,7 @@ Temp directories are cleaned up on completion and on unexpected exit.
 """
 
 import atexit
+import enum
 import json
 import os
 import re
@@ -72,6 +73,13 @@ class RunResult:
     cmdline: str = ''  # copy-pasteable z3 command for manual re-run
     stats: dict | None = None  # parsed z3 -st stats, when --stats enabled
     split: str | None = None  # split name, when --split used
+
+
+class StopAction(enum.Enum):
+    """Disposition returned by process_result: what the sweep should do next."""
+    NONE = 'none'            # record & continue
+    GLOBAL = 'global'        # abort the whole sweep
+    PER_SPLIT = 'per_split'  # prune just this split's remaining work
 
 
 _STATS_BLOCK_RE = re.compile(r'\(\s*(:[\s\S]+?)\)\s*\Z')
@@ -353,12 +361,19 @@ def make_split_smt(src_path: str, inject: str, dest_path: str) -> None:
     Path(dest_path).write_text('\n'.join(out_lines))
 
 
-def _run_parallel(work, jobs, process_result, *, z3_bin, timeout,
-                  trace_tags, verbosity, z3_log, save_dir, parent_tmpdir,
-                  stats):
+def _run_parallel(work, jobs, process_result, closed_splits, *, z3_bin,
+                  timeout, trace_tags, verbosity, z3_log, save_dir,
+                  parent_tmpdir, stats):
     """Run work items in a process pool. Each work item is
     (split_name, smt_path, config, seed). `process_result(result)` returns
-    True to request early termination."""
+    a StopAction indicating how to proceed. `closed_splits` is mutated by
+    process_result when a split closes; this function also inspects it to
+    decide when to prune pending work or abort early.
+
+    Trade-off: futures are submitted up-front, so a closed split's
+    already-pending work pays its pickling cost before being cancelled.
+    With -j typically 4-16, the waste is bounded by `jobs - 1` z3
+    processes draining naturally after closure."""
     executor = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker)
     futures = {}
     stopped_early = False
@@ -375,9 +390,25 @@ def _run_parallel(work, jobs, process_result, *, z3_bin, timeout,
             except BrokenProcessPool:
                 # A worker died unexpectedly; treat as interruption.
                 raise KeyboardInterrupt from None
-            if process_result(result):
+            action = process_result(result)
+            if action is StopAction.GLOBAL:
                 stopped_early = True
                 break
+            if action is StopAction.PER_SPLIT:
+                # Cancel pending futures for the just-closed split. Running
+                # ones finish naturally; their results stream and tally but
+                # don't re-trigger closure (guard in process_result).
+                split_name = result.split
+                for fut, (fsname, _c, _s) in list(futures.items()):
+                    if fsname == split_name and not fut.done():
+                        fut.cancel()
+                # Fast path: every remaining future belongs to a closed
+                # split — kill everything now (no collateral damage since
+                # nothing else is waiting on these).
+                remaining = [ids for fut, ids in futures.items() if not fut.done()]
+                if remaining and all(sn in closed_splits for sn, _, _ in remaining):
+                    stopped_early = True
+                    break
     except KeyboardInterrupt:
         _cancel_and_shutdown(executor, futures)
         raise
@@ -397,7 +428,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               on_result=None,
               stop_when=None,
               stats: bool = False,
-              splits: list[tuple[str, str]] | None = None
+              splits: list[tuple[str, str]] | None = None,
+              stop_per_split_when=None
               ) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults.
 
@@ -406,6 +438,12 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
 
     If `stop_when(result)` returns truthy, the sweep aborts after processing
     that result: pending futures are cancelled and running workers killed.
+
+    If `stop_per_split_when(result)` returns truthy AND result.split is set,
+    that split is marked closed: its pending (not-yet-running) work is
+    cancelled, while other splits keep running. First-match semantics —
+    subsequent matching results for an already-closed split are recorded
+    and streamed but have no control-flow effect.
 
     If `splits` is given (list of (name, smt_to_inject)), a modified benchmark
     is generated per split and the sweep cross-products splits × configs × seeds.
@@ -418,6 +456,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
     table = SweepTable(config_names, seeds)
     all_results: list[RunResult] = []
     status_counts = {'sat': 0, 'unsat': 0, 'timeout': 0, 'unknown': 0, 'error': 0}
+    closed_splits: set[str] = set()
+    n_splits_total = len(splits) if splits else 0
 
     # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
     # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
@@ -457,15 +497,18 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
         progress = None
 
     def _tally_desc() -> str:
-        return (f"Sweeping  "
+        base = (f"Sweeping  "
                 f"[green]sat={status_counts['sat']}[/green] "
                 f"[cyan]unsat={status_counts['unsat']}[/cyan] "
                 f"[red]to={status_counts['timeout']}[/red] "
                 f"[yellow]unk={status_counts['unknown']}[/yellow] "
                 f"err={status_counts['error']}")
+        if stop_per_split_when is not None and n_splits_total:
+            base += f"  [magenta]closed={len(closed_splits)}/{n_splits_total}[/magenta]"
+        return base
 
-    def process_result(result: RunResult) -> bool:
-        """Return True to request early termination of the sweep."""
+    def process_result(result: RunResult) -> StopAction:
+        """Record the result and return the appropriate StopAction."""
         table.add_result(result.config, result.seed, result.status, result.time_s)
         all_results.append(result)
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
@@ -473,22 +516,37 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             on_result(result)
         if progress:
             progress.update(task_id, advance=1, description=_tally_desc())
-        return bool(stop_when(result)) if stop_when is not None else False
+
+        if stop_when is not None and stop_when(result):
+            return StopAction.GLOBAL
+        if (stop_per_split_when is not None
+                and result.split is not None
+                and result.split not in closed_splits
+                and stop_per_split_when(result)):
+            closed_splits.add(result.split)
+            return StopAction.PER_SPLIT
+        return StopAction.NONE
 
     ctx = progress if progress else _nullcontext()
     try:
         with ctx:
             if jobs == 1:
                 for sname, spath, config, seed in work:
+                    if sname in closed_splits:
+                        continue
                     result = run_single(z3_bin, spath, seed, config,
                                         timeout, trace_tags, verbosity, z3_log,
                                         save_dir, parent_tmpdir=sweep_tmp,
                                         stats=stats, split_name=sname)
-                    if process_result(result):
+                    action = process_result(result)
+                    if action is StopAction.GLOBAL:
                         break
+                    # PER_SPLIT and NONE both continue; the closed_splits
+                    # set grows and the skip at the top prunes remaining
+                    # work for closed splits.
             else:
                 _run_parallel(
-                    work, jobs, process_result,
+                    work, jobs, process_result, closed_splits,
                     z3_bin=z3_bin, timeout=timeout,
                     trace_tags=trace_tags, verbosity=verbosity, z3_log=z3_log,
                     save_dir=save_dir, parent_tmpdir=sweep_tmp,
