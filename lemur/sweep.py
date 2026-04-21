@@ -7,12 +7,15 @@ Temp directories are cleaned up on completion and on unexpected exit.
 
 import atexit
 import os
+import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +64,7 @@ class RunResult:
     cmdline: str = ''  # copy-pasteable z3 command for manual re-run
 
 
-# Global set of temp dirs for cleanup on unexpected exit
+# Temp dirs created by in-flight runs, cleaned up on normal or abnormal exit.
 _active_temp_dirs: set[str] = set()
 
 
@@ -73,39 +76,41 @@ def _cleanup_temp_dirs():
 
 atexit.register(_cleanup_temp_dirs)
 
-# Also clean up on SIGTERM/SIGINT
-_orig_sigterm = signal.getsignal(signal.SIGTERM)
-_orig_sigint = signal.getsignal(signal.SIGINT)
 
-
-def _signal_cleanup(signum, frame):
-    _cleanup_temp_dirs()
-    # Re-raise original handler
-    orig = _orig_sigterm if signum == signal.SIGTERM else _orig_sigint
-    if callable(orig):
-        orig(signum, frame)
-    else:
-        raise SystemExit(1)
-
-
-# Only install signal handlers in the main process
-if os.getpid() == os.getpid():  # always true, but signals set at import
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Best-effort termination of a subprocess's whole process group."""
+    if proc.poll() is not None:
+        return
     try:
-        signal.signal(signal.SIGTERM, _signal_cleanup)
-        signal.signal(signal.SIGINT, _signal_cleanup)
-    except (OSError, ValueError):
-        pass  # can't set signal handler in non-main thread
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                timeout: int, trace_tags: list[str] | None = None,
                verbosity: int = 2, z3_log: bool = False,
-               save_dir: str | None = None) -> RunResult:
+               save_dir: str | None = None,
+               parent_tmpdir: str | None = None) -> RunResult:
     """Run a single Z3 invocation in a temp directory."""
 
-    tmpdir = tempfile.mkdtemp(prefix=f"lemur_{config.name}_s{seed}_")
+    tmpdir = tempfile.mkdtemp(prefix=f"lemur_{config.name}_s{seed}_",
+                              dir=parent_tmpdir)
     _active_temp_dirs.add(tmpdir)
 
+    cmdline = ''
+    proc: subprocess.Popen | None = None
     try:
         cmd = [z3_bin]
 
@@ -132,23 +137,39 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             smt_file,
         ])
 
-        # Build a copy-pasteable command line (uses shlex for safe quoting)
-        import shlex
         cmdline = shlex.join(cmd)
 
         start = time.monotonic()
-        proc = subprocess.run(
+        # start_new_session puts z3 in its own process group so we can
+        # reliably kill it (and anything it spawns) on timeout or Ctrl-C.
+        proc = subprocess.Popen(
             cmd,
             cwd=tmpdir,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout + 10,  # grace period beyond z3's own timeout
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout + 10)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = '', ''
+            return RunResult(
+                config=config.name, seed=seed, status='timeout',
+                time_s=float(timeout),
+                stdout=stdout or '',
+                stderr=(stderr or '') + '\ntimeout (process killed)',
+                trace_file=None, cmdline=cmdline,
+            )
         elapsed = time.monotonic() - start
 
         # Parse status from stdout
-        stdout = proc.stdout.strip()
-        first_line = stdout.split('\n')[0].strip() if stdout else ''
+        out = stdout.strip()
+        first_line = out.split('\n')[0].strip() if out else ''
         if first_line == 'sat':
             status = 'sat'
         elif first_line == 'unsat':
@@ -172,12 +193,12 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                 shutil.copy2(trace_src, trace_dest)
 
             # stdout
-            if proc.stdout.strip():
-                prefix.with_suffix('.stdout').write_text(proc.stdout)
+            if stdout.strip():
+                prefix.with_suffix('.stdout').write_text(stdout)
 
             # stderr
-            if proc.stderr.strip():
-                prefix.with_suffix('.stderr').write_text(proc.stderr)
+            if stderr.strip():
+                prefix.with_suffix('.stderr').write_text(stderr)
 
             # z3 AST trace log
             z3_log_src = Path(tmpdir) / 'z3.log'
@@ -189,21 +210,19 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             seed=seed,
             status=status,
             time_s=elapsed,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=stdout,
+            stderr=stderr,
             trace_file=trace_dest,
             cmdline=cmdline,
         )
 
-    except subprocess.TimeoutExpired:
-        return RunResult(
-            config=config.name, seed=seed, status='timeout',
-            time_s=float(timeout), stdout='', stderr='timeout (process killed)',
-            trace_file=None, cmdline=cmdline,
-        )
+    except (KeyboardInterrupt, SystemExit):
+        if proc is not None:
+            _kill_process_group(proc)
+        raise
     except Exception as e:
-        import shlex
-        cmdline = shlex.join(cmd) if 'cmd' in dir() else ''
+        if proc is not None:
+            _kill_process_group(proc)
         return RunResult(
             config=config.name, seed=seed, status='error',
             time_s=0.0, stdout='', stderr=str(e), trace_file=None,
@@ -212,6 +231,69 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
         _active_temp_dirs.discard(tmpdir)
+
+
+def _init_worker():
+    """Ensure SIGINT raises KeyboardInterrupt in pool workers so run_single's
+    cleanup path runs and the z3 subprocess is killed before the worker dies."""
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+def _shutdown_pool_workers(executor: ProcessPoolExecutor) -> None:
+    """Give workers a moment to self-clean on SIGINT, then force any stragglers.
+
+    Each worker's run_single kills its z3 child and removes its tmpdir when
+    KeyboardInterrupt fires. We send SIGINT explicitly (not relying on the
+    shell's group signal) and wait briefly before SIGTERM/SIGKILL."""
+    procs = list(getattr(executor, '_processes', {}).values())
+    for p in procs:
+        try:
+            p.send_signal(signal.SIGINT)
+        except Exception:
+            pass
+    deadline = time.monotonic() + 3.0
+    for p in procs:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            p.join(timeout=remaining)
+        except Exception:
+            pass
+    for p in procs:
+        try:
+            if p.is_alive():
+                p.terminate()
+        except Exception:
+            pass
+
+
+def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
+                  trace_tags, verbosity, z3_log, save_dir, parent_tmpdir):
+    executor = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker)
+    futures = {}
+    try:
+        for config, seed in work:
+            f = executor.submit(run_single, z3_bin, smt_file, seed, config,
+                                timeout, trace_tags, verbosity, z3_log,
+                                save_dir, parent_tmpdir)
+            futures[f] = (config.name, seed)
+
+        for f in as_completed(futures):
+            try:
+                result = f.result()
+            except BrokenProcessPool:
+                # A worker died unexpectedly; treat as interruption.
+                raise KeyboardInterrupt from None
+            process_result(result)
+    except KeyboardInterrupt:
+        for fut in futures:
+            fut.cancel()
+        _shutdown_pool_workers(executor)
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
 
 
 def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
@@ -254,26 +336,35 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             desc = f"[dim]{result.config}[/dim] s{result.seed}: {result.status}"
             progress.update(task_id, advance=1, description=desc)
 
-    ctx = progress if progress else _nullcontext()
-    with ctx:
-        if jobs == 1:
-            for config, seed in work:
-                result = run_single(z3_bin, smt_file, seed, config,
-                                    timeout, trace_tags, verbosity, z3_log,
-                                    save_dir)
-                process_result(result)
-        else:
-            with ProcessPoolExecutor(max_workers=jobs) as executor:
-                futures = {}
-                for config, seed in work:
-                    f = executor.submit(run_single, z3_bin, smt_file, seed,
-                                        config, timeout, trace_tags, verbosity,
-                                        z3_log, save_dir)
-                    futures[f] = (config.name, seed)
+    # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
+    # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
+    sweep_tmp = tempfile.mkdtemp(prefix='lemur_sweep_')
+    _active_temp_dirs.add(sweep_tmp)
 
-                for f in as_completed(futures):
-                    result = f.result()
+    ctx = progress if progress else _nullcontext()
+    try:
+        with ctx:
+            if jobs == 1:
+                for config, seed in work:
+                    result = run_single(z3_bin, smt_file, seed, config,
+                                        timeout, trace_tags, verbosity, z3_log,
+                                        save_dir, parent_tmpdir=sweep_tmp)
                     process_result(result)
+            else:
+                _run_parallel(
+                    work, jobs, process_result,
+                    z3_bin=z3_bin, smt_file=smt_file, timeout=timeout,
+                    trace_tags=trace_tags, verbosity=verbosity, z3_log=z3_log,
+                    save_dir=save_dir, parent_tmpdir=sweep_tmp,
+                )
+    except KeyboardInterrupt:
+        print("\n[interrupted] killing running z3 processes and cleaning up...",
+              file=sys.stderr)
+        _cleanup_temp_dirs()
+        sys.exit(130)
+    finally:
+        shutil.rmtree(sweep_tmp, ignore_errors=True)
+        _active_temp_dirs.discard(sweep_tmp)
 
     return table, all_results
 
