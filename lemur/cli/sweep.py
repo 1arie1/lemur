@@ -93,11 +93,58 @@ def register(subparsers):
 
 
 def run(args):
-    # Resolve benchmark path
+    # Resolve benchmark path. May be a single .smt2 file OR a directory
+    # produced by `lemur split` (with a plan.json manifest).
     benchmark = Path(args.benchmark).resolve()
     if not benchmark.exists():
         print(f"Error: benchmark file not found: {benchmark}", file=sys.stderr)
         sys.exit(1)
+
+    leaf_files = None
+    pre_closed_splits = None
+    if benchmark.is_dir():
+        # Directory mode: plan.json is the authoritative manifest.
+        if args.split:
+            print("Error: directory mode (sweep DIR/) is incompatible with --split; "
+                  "the directory's plan.json is already the split manifest.",
+                  file=sys.stderr)
+            sys.exit(2)
+        from lemur.split import read_plan, SplitError
+        try:
+            plan = read_plan(str(benchmark))
+        except SplitError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            print("       (sweep DIR/ expects a plan.json produced by "
+                  "`lemur split`.)", file=sys.stderr)
+            sys.exit(2)
+        leaf_files = []
+        pre_closed_splits = {}
+        for leaf in plan.leaves:
+            if leaf.pruned:
+                # Synthesize a split name from the valuation tuple so it
+                # shows up in the CSV/tally. Mirror the emitter's naming.
+                label = '_'.join('T' if v else 'F'
+                                 for v in leaf.valuation.values())
+                pre_closed_splits[f"leaf_{label}"] = leaf.reason or "pruned"
+            elif leaf.file:
+                name = Path(leaf.file).stem
+                path = benchmark / leaf.file
+                if not path.exists():
+                    print(f"Warning: plan.json lists {leaf.file} but the file "
+                          f"is missing; skipping", file=sys.stderr)
+                    continue
+                leaf_files.append((name, str(path)))
+        if not leaf_files and not pre_closed_splits:
+            print(f"Error: {benchmark}/plan.json has no leaves to sweep.",
+                  file=sys.stderr)
+            sys.exit(2)
+        # `benchmark` is a directory; run_sweep's `smt_file` parameter is
+        # used only as a fallback when neither splits nor leaf_files is set,
+        # so passing a placeholder string is harmless, but we stringify the
+        # dir path just for downstream display consistency.
+        benchmark_str_for_sweep = str(benchmark)
+    else:
+        benchmark_str_for_sweep = str(benchmark)
 
     # Resolve z3 binary
     z3_bin = args.z3 or str(Path.home() / 'ag/z3/z3-edge/build/z3')
@@ -162,10 +209,12 @@ def run(args):
             sys.exit(1)
 
     # Validate --stop-on-per-split early, before any stdout header is written.
-    # Requires --split; incompatible with --stop-on; composes with --fail-fast.
+    # Requires either --split or directory-mode leaves; incompatible with
+    # --stop-on; composes with --fail-fast.
     if args.stop_on_per_split:
-        if not splits:
-            print("Error: --stop-on-per-split requires --split",
+        if not splits and leaf_files is None:
+            print("Error: --stop-on-per-split requires either --split or a "
+                  "directory (sweep DIR/) as the benchmark positional.",
                   file=sys.stderr)
             sys.exit(2)
         if args.stop_on:
@@ -191,12 +240,21 @@ def run(args):
 
     console = make_console(no_color=args.no_color) if effective_fmt == 'rich' else None
 
+    # Any mode that carries a `split` dimension in results: explicit --split,
+    # or directory-mode leaf_files / pre_closed_splits.
+    has_splits = bool(splits) or bool(leaf_files) or bool(pre_closed_splits)
+
     if show_progress and console:
         console.print(f"[bold]lemur sweep[/bold] {benchmark.name}")
         console.print(f"  z3: {z3_bin}")
         console.print(f"  seeds: {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
         console.print(f"  configs: {', '.join(c.name for c in configs)}")
         console.print(f"  timeout: {args.timeout}s, jobs: {jobs}")
+        if leaf_files is not None:
+            n_live = len(leaf_files)
+            n_pre = len(pre_closed_splits) if pre_closed_splits else 0
+            console.print(f"  leaves: {n_live} live + {n_pre} pre-closed "
+                          f"(from {benchmark}/plan.json)")
         if trace_tags:
             console.print(f"  trace: {', '.join(trace_tags)}")
         console.print()
@@ -205,12 +263,12 @@ def run(args):
     on_result = None
     if effective_fmt == 'plain':
         writer = csv.writer(sys.stdout)
-        header = ["split", "config", "seed", "status", "time_s"] if splits \
+        header = ["split", "config", "seed", "status", "time_s"] if has_splits \
                  else ["config", "seed", "status", "time_s"]
         writer.writerow(header)
         sys.stdout.flush()
 
-        if splits:
+        if has_splits:
             def on_result(r):
                 writer.writerow([r.split or '', r.config, r.seed, r.status,
                                  f"{r.time_s:.3f}"])
@@ -239,7 +297,7 @@ def run(args):
 
     table, results = run_sweep(
         z3_bin=z3_bin,
-        smt_file=str(benchmark),
+        smt_file=benchmark_str_for_sweep,
         seeds=seeds,
         configs=configs,
         timeout=args.timeout,
@@ -254,6 +312,8 @@ def run(args):
         stats=args.stats,
         splits=splits,
         stop_per_split_when=stop_per_split_when,
+        leaf_files=leaf_files,
+        pre_closed_splits=pre_closed_splits,
     )
 
     if show_progress and console:
@@ -262,12 +322,12 @@ def run(args):
     # Plain rows were already streamed; only render final table for rich/json.
     # Skip the flat SweepTable when splits are used (it doesn't model the split
     # dimension); the tally below gives the per-(split, config) view instead.
-    if effective_fmt != 'plain' and not splits:
+    if effective_fmt != 'plain' and not has_splits:
         output(table, fmt=effective_fmt, console=console)
 
     # Per-config aggregation. Force-on when splits are in play, since the
     # flat SweepTable above was skipped.
-    if (args.tally or splits) and results:
+    if (args.tally or has_splits) and results:
         tally = tally_mod.compute_tally(results)
         if effective_fmt == 'rich':
             if console:

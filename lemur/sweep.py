@@ -24,6 +24,8 @@ from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 
+from lemur.smt_inject import make_split_smt
+
 from lemur.table import SweepTable, make_console
 
 
@@ -336,31 +338,6 @@ def _cancel_and_shutdown(executor, futures):
     executor.shutdown(wait=False, cancel_futures=True)
 
 
-def make_split_smt(src_path: str, inject: str, dest_path: str) -> None:
-    """Write a copy of `src_path` with `inject` placed before the first
-    non-commented `(check-sat)`. If no `(check-sat)` is found, one is appended
-    along with the injection."""
-    content = Path(src_path).read_text()
-    lines = content.split('\n')
-    out_lines: list[str] = []
-    injected = False
-    for line in lines:
-        code = line
-        if ';' in code:
-            code = code[:code.index(';')]
-        if not injected and '(check-sat)' in code:
-            out_lines.append('; --- lemur split injection ---')
-            out_lines.append(inject)
-            out_lines.append('; --- end injection ---')
-            injected = True
-        out_lines.append(line)
-    if not injected:
-        out_lines.append('; --- lemur split injection ---')
-        out_lines.append(inject)
-        out_lines.append('(check-sat)')
-    Path(dest_path).write_text('\n'.join(out_lines))
-
-
 def _run_parallel(work, jobs, process_result, closed_splits, *, z3_bin,
                   timeout, trace_tags, verbosity, z3_log, save_dir,
                   parent_tmpdir, stats):
@@ -433,7 +410,9 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               stop_when=None,
               stats: bool = False,
               splits: list[tuple[str, str]] | None = None,
-              stop_per_split_when=None
+              stop_per_split_when=None,
+              leaf_files: list[tuple[str, str]] | None = None,
+              pre_closed_splits: dict[str, str] | None = None,
               ) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults.
 
@@ -451,7 +430,18 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
 
     If `splits` is given (list of (name, smt_to_inject)), a modified benchmark
     is generated per split and the sweep cross-products splits × configs × seeds.
+
+    If `leaf_files` is given (list of (split_name, smt_path)), each entry is
+    an already-complete leaf SMT file. No injection is applied; the file is
+    used as-is. Mutually exclusive with `splits`.
+
+    If `pre_closed_splits` is given (dict of split_name → reason), synthetic
+    UNSAT results with time_s=0 are recorded for those splits at sweep start
+    so the tally's per-split closure summary marks them closed without
+    spawning z3 (used for plan.json's `pruned` leaves).
     """
+    if splits and leaf_files:
+        raise ValueError("run_sweep: `splits` and `leaf_files` are mutually exclusive")
 
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
@@ -461,7 +451,14 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
     all_results: list[RunResult] = []
     status_counts = {'sat': 0, 'unsat': 0, 'timeout': 0, 'unknown': 0, 'error': 0}
     closed_splits: set[str] = set()
-    n_splits_total = len(splits) if splits else 0
+    # Count total splits (for the `closed=N/M` progress readout): prefer the
+    # explicit `splits` / `leaf_files` list, then fall back to pre-closed.
+    if splits:
+        n_splits_total = len(splits)
+    elif leaf_files:
+        n_splits_total = len(leaf_files) + (len(pre_closed_splits) if pre_closed_splits else 0)
+    else:
+        n_splits_total = 0
 
     # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
     # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
@@ -475,6 +472,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             dest = os.path.join(sweep_tmp, f"split_{name}.smt2")
             make_split_smt(smt_file, inject, dest)
             split_files.append((name, dest))
+    elif leaf_files:
+        split_files = [(name, path) for name, path in leaf_files]
     else:
         split_files = [(None, smt_file)]
 
@@ -483,7 +482,9 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             for sname, spath in split_files
             for config in configs
             for seed in seeds]
-    total = len(work)
+    # Pre-closed splits emit exactly one synthetic result each, so they
+    # count toward the progress-bar total.
+    total = len(work) + (len(pre_closed_splits) if pre_closed_splits else 0)
 
     if show_progress:
         console = make_console()
@@ -530,6 +531,34 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             closed_splits.add(result.split)
             return StopAction.PER_SPLIT
         return StopAction.NONE
+
+    # Emit synthetic UNSAT results for pre-closed splits (e.g., plan.json's
+    # pruned leaves). They get streamed, tallied, and count toward per-split
+    # closure without spawning z3.
+    if pre_closed_splits:
+        # Use the first configured config as the "closer" label; seed 0.
+        closer_config = configs[0].name if configs else 'default'
+        for sname, reason in pre_closed_splits.items():
+            synthetic = RunResult(
+                config=closer_config,
+                seed=0,
+                status='unsat',
+                time_s=0.0,
+                stdout='', stderr=f'[lemur] pre-closed: {reason}',
+                trace_file=None,
+                cmdline='',
+                stats=None,
+                split=sname,
+            )
+            # Direct fan-out: record + stream + notify stop predicates.
+            # stop actions from pre-closed results are honored (they close
+            # the split for per-split semantics).
+            action = process_result(synthetic)
+            # GLOBAL stop from a synthetic unsat would be surprising; we
+            # ignore it and continue so the actual sweep still runs.
+            # (User who wants global-abort on first unsat should not be
+            #  using pre-closed splits in the first place.)
+            del action
 
     ctx = progress if progress else _nullcontext()
     try:

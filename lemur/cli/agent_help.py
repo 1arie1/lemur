@@ -33,7 +33,10 @@ why reach for lemur instead of ad-hoc bash/grep/awk/python:
   shape directly.
 - case-split workflow. `--split` rewrites (check-sat) in-place, runs
   the cross-product, and reports whether the disjunction is closed. you
-  don't hand-edit SMT variant files.
+  don't hand-edit SMT variant files. `lemur split` goes a step further
+  — it discovers candidate Boolean splits automatically, probe-scores
+  them, and emits a plan.json + leaf .smt2 files that `lemur sweep DIR/`
+  consumes directly.
 
 when bash is fine: one-off `z3 ... | grep sat`. when lemur wins: more
 than one seed, more than one config, or you need structured output that
@@ -43,6 +46,10 @@ another lemur command will consume.
 SECTIONS = {
     'sweep': """\
 lemur sweep BENCH.smt2 --seeds 0-15 --timeout 30
+  (also: lemur sweep LEAVES_DIR/  — directory mode; reads plan.json written
+   by `lemur split` and treats each non-pruned leaf as an implicit split;
+   pruned leaves surface in the tally as pre-closed UNSAT; plan.json is the
+   authoritative manifest so extra files in the dir are ignored.)
   why: parallel z3 pool with process-group kill on Ctrl-C/timeout/--stop-on,
        per-run tmpdir isolation (traces don't collide), streaming CSV.
 
@@ -59,9 +66,9 @@ lemur sweep BENCH.smt2 --seeds 0-15 --timeout 30
                                 scope --stop-on to each split: close a split
                                 on its first matching run, skip that split's
                                 remaining runs, continue others. requires
-                                --split; incompatible with --stop-on;
-                                composes with --fail-fast. the canonical
-                                UNSAT-by-decomposition loop.
+                                --split OR directory mode; incompatible with
+                                --stop-on; composes with --fail-fast. the
+                                canonical UNSAT-by-decomposition loop.
     --fail-fast                 abort on first timeout/unknown/error
   output:
     --tally                     per-config aggregation after CSV
@@ -128,6 +135,39 @@ lemur search TRACE [PATTERN] [--tag RE] [--fn RE] [-n] [--entries]
   PATTERN optional: omit to dump every line in filtered entries.
   -i/-v/-c/--max-count standard. exit 0 match, 1 no match, 2 regex error.
 """,
+    'split': """\
+lemur split BENCH.smt2 [--out DIR] [--max-leaves N]
+  why: automatically discover good Boolean case-splits on hard SMT2 (the
+       kind that manually cracks 60s-TO Certora VCs). enumerates
+       candidate Bool predicates (--split-name-pattern, default BLK__\\d+,
+       plus ITE guards), probe-scores each via simplification, greedy-
+       nests up to log2(--max-leaves). emits a self-contained output dir
+       with plan.json + leaf_*.smt2 files + a verbatim copy of the
+       source. optional [split] extra: pip install 'lemur[split]'.
+
+  key flags:
+    --out DIR                 default: <BENCH-stem>_children/ next to source
+    --max-leaves N            cap 2^k (default 32, floor 8)
+    --split-score-threshold F (default 10)
+    --split-probe-timeout S   per-candidate simplify timeout (default 5s)
+    --split-name-pattern RE   reachability Bool regex (default BLK__\\d+)
+    --plan-only               write plan.json only; no leaf files on disk
+    --force                   overwrite an --out dir that already has plan.json
+
+  version note: the z3 Python API used here can differ from the z3
+  binary that `lemur sweep` invokes. That is fine: split only
+  manipulates formulas. The solver of record is the binary.
+""",
+    'split-status': """\
+lemur split-status DIR
+  why: walks a recursive split tree (from `lemur split` then recursive
+       re-splits) and reports aggregate stats: total leaves across the
+       tree, emitted vs pruned, max depth, per-plan summary, and whether
+       each plan has sweep results populated. Lets you see at a glance
+       whether the whole decomposition closed.
+  -v   list every leaf with its path and state
+  -f plain|rich|json    json emits the full tree for scripting
+""",
 }
 
 
@@ -144,6 +184,15 @@ workflows:
 # whether the disjunction is fully closed.
   lemur sweep bench.smt2 --seeds 0-15 --timeout 30 --split 'BLK25:(assert BLK__25)' --split 'BLK26:(assert BLK__26)' --stop-on-per-split unsat --tally -f plain
 
+# auto-discover case-splits, then sweep them (recursive-ready)
+# `lemur split` emits leaves + plan.json; sweep DIR/ uses plan.json as
+# manifest. If a leaf is still hard, re-run `lemur split` on it.
+  lemur split bench.smt2 --out leaves/
+  lemur sweep leaves/ --seeds 0-7 --timeout 10 --stop-on-per-split unsat --tally -f plain
+  # recurse on a stubborn leaf:
+  lemur split leaves/leaf_T_F_T.smt2
+  lemur split-status leaves/
+
 # config A vs B on stats counters
   lemur sweep bench.smt2 --seeds 0-7 --timeout 30 --stats --save ./out --config 'A: smt.arith.solver=2' --config 'B: smt.arith.solver=6'
   lemur stats-compare ./out --top 20
@@ -158,7 +207,7 @@ workflows:
 
 def full() -> str:
     parts = [
-        "lemur: z3 trace analysis toolkit. six subcommands.",
+        "lemur: z3 trace analysis toolkit. eight subcommands.",
         "",
         WHY,
         "",

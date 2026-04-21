@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from lemur.cli import sweep, stats, nla, tally, stats_compare, search
+from lemur.cli import split as split_cli, split_status
 from lemur.cli import agent_help
 
 
@@ -23,6 +24,8 @@ def main():
     tally.register(sub)
     stats_compare.register(sub)
     search.register(sub)
+    split_cli.register(sub)
+    split_status.register(sub)
 
     args, remaining = parser.parse_known_args()
 
