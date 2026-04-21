@@ -13,6 +13,7 @@ from lemur.report import (
     parse_lemma_ranges, expand_lemma_ranges,
     humanize_varmap, humanize_constants,
 )
+from lemur.cli import agent_help
 
 from rich.panel import Panel
 from rich.table import Table
@@ -21,7 +22,8 @@ from rich.text import Text as RichText
 
 def register(subparsers):
     p = subparsers.add_parser('nla', help='NLA solver lemma analysis',
-                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
+                               epilog='AI agents: use `lemur nla --agent` for terse usage guide.')
+    agent_help.add_agent_flag(p, 'nla')
     p.add_argument('trace', help='Path to .z3-trace file')
     p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                    help='Output format (default: rich for TTY, plain otherwise)')

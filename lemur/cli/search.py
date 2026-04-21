@@ -8,14 +8,16 @@ from rich.text import Text
 
 from lemur.parsers import parse_trace
 from lemur.table import make_console
+from lemur.cli import agent_help
 
 
 def register(subparsers):
     p = subparsers.add_parser(
         'search',
         help='Regex search over .z3-trace body lines, filtered by tag/function',
-        epilog='AI agents: use `lemur --agent` for terse usage guide.',
+        epilog='AI agents: use `lemur search --agent` for terse usage guide.',
     )
+    agent_help.add_agent_flag(p, 'search')
     p.add_argument('trace', help='Path to .z3-trace file')
     p.add_argument('pattern', nargs='?', default=None,
                    help="Regex to match against body lines (omit to match every "

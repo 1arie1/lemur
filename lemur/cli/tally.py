@@ -5,11 +5,13 @@ from pathlib import Path
 
 from lemur.table import make_console
 from lemur.tally import compute_tally, read_sweep_csv, render_rich, to_csv, to_json
+from lemur.cli import agent_help
 
 
 def register(subparsers):
     p = subparsers.add_parser('tally', help='Aggregate sweep CSV by config',
-                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
+                               epilog='AI agents: use `lemur tally --agent` for terse usage guide.')
+    agent_help.add_agent_flag(p, 'tally')
     p.add_argument('csv_file',
                    help='Sweep CSV file (columns: config,seed,status,time_s; '
                         'optional leading `split` column from `sweep --split`)')

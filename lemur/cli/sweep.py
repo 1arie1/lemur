@@ -13,6 +13,7 @@ from rich.text import Text
 from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
 from lemur import tally as tally_mod
+from lemur.cli import agent_help
 
 
 def _parse_grid(spec: str) -> tuple[str, list[str]]:
@@ -40,7 +41,8 @@ def _parse_split(spec: str) -> tuple[str, str]:
 
 def register(subparsers):
     p = subparsers.add_parser('sweep', help='Run Z3 across seeds and configurations',
-                               epilog='AI agents: use `lemur --agent` for terse usage guide.')
+                               epilog='AI agents: use `lemur sweep --agent` for terse usage guide.')
+    agent_help.add_agent_flag(p, 'sweep')
     p.add_argument('benchmark', help='SMT2 benchmark file')
     p.add_argument('--seeds', default='0-3',
                    help='Seed range: 0-15, 1,3,5, or 0-3,7 (default: 0-3)')

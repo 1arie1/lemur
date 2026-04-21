@@ -5,12 +5,14 @@ from pathlib import Path
 
 from lemur.stats import build_stats_output
 from lemur.table import output, make_console
+from lemur.cli import agent_help
 
 
 def register(subparsers):
     p = subparsers.add_parser('stats', help='General trace file statistics',
-                               epilog='AI agents: use `lemur --agent` for terse usage guide. '
+                               epilog='AI agents: use `lemur stats --agent` for terse usage guide. '
                                       'For NLA lemma analysis, use `lemur nla`.')
+    agent_help.add_agent_flag(p, 'stats')
     p.add_argument('trace', help='Path to .z3-trace file')
     p.add_argument('--tag', action='append', default=None,
                    help='Filter to specific tag(s). Repeatable.')

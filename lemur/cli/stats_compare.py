@@ -5,14 +5,16 @@ from pathlib import Path
 
 from lemur.stats_compare import load_stats_dir, render_rich, to_csv, to_json
 from lemur.table import make_console
+from lemur.cli import agent_help
 
 
 def register(subparsers):
     p = subparsers.add_parser(
         'stats-compare',
         help='Compare z3 -st statistics across configs from a saved sweep dir',
-        epilog='AI agents: use `lemur --agent` for terse usage guide.',
+        epilog='AI agents: use `lemur stats-compare --agent` for terse usage guide.',
     )
+    agent_help.add_agent_flag(p, 'stats-compare')
     p.add_argument('directory',
                    help='Directory with <config>_s<seed>.stats.json files '
                         '(as written by `lemur sweep --stats --save DIR`)')
