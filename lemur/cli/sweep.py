@@ -60,6 +60,10 @@ def register(subparsers):
                    help='Hide z3 command lines from output')
     p.add_argument('--tally', action='store_true',
                    help='Print per-config aggregation after results')
+    p.add_argument('--stop-on', choices=['sat', 'unsat'], default=None,
+                   help='Abort sweep on first run matching this status')
+    p.add_argument('--fail-fast', action='store_true',
+                   help='Abort sweep on first timeout/unknown/error')
     p.set_defaults(func=run)
 
 
@@ -161,6 +165,15 @@ def run(args):
             writer.writerow([r.config, r.seed, r.status, f"{r.time_s:.3f}"])
             sys.stdout.flush()
 
+    # Build the early-termination predicate.
+    stop_when = None
+    if args.stop_on or args.fail_fast:
+        fail_statuses = {'timeout', 'unknown', 'error'} if args.fail_fast else set()
+        target = args.stop_on  # 'sat' | 'unsat' | None
+
+        def stop_when(r):
+            return r.status == target or r.status in fail_statuses
+
     table, results = run_sweep(
         z3_bin=z3_bin,
         smt_file=str(benchmark),
@@ -174,6 +187,7 @@ def run(args):
         save_dir=args.save,
         show_progress=show_progress,
         on_result=on_result,
+        stop_when=stop_when,
     )
 
     if show_progress and console:

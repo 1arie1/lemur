@@ -274,10 +274,20 @@ def _shutdown_pool_workers(executor: ProcessPoolExecutor) -> None:
             pass
 
 
+def _cancel_and_shutdown(executor, futures):
+    for fut in futures:
+        fut.cancel()
+    _shutdown_pool_workers(executor)
+    executor.shutdown(wait=False, cancel_futures=True)
+
+
 def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
                   trace_tags, verbosity, z3_log, save_dir, parent_tmpdir):
+    """Run work items in a process pool. `process_result(result)` returns True
+    to request early termination (cancels pending, force-shuts workers)."""
     executor = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker)
     futures = {}
+    stopped_early = False
     try:
         for config, seed in work:
             f = executor.submit(run_single, z3_bin, smt_file, seed, config,
@@ -291,15 +301,17 @@ def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
             except BrokenProcessPool:
                 # A worker died unexpectedly; treat as interruption.
                 raise KeyboardInterrupt from None
-            process_result(result)
+            if process_result(result):
+                stopped_early = True
+                break
     except KeyboardInterrupt:
-        for fut in futures:
-            fut.cancel()
-        _shutdown_pool_workers(executor)
-        executor.shutdown(wait=False, cancel_futures=True)
+        _cancel_and_shutdown(executor, futures)
         raise
     else:
-        executor.shutdown(wait=True)
+        if stopped_early:
+            _cancel_and_shutdown(executor, futures)
+        else:
+            executor.shutdown(wait=True)
 
 
 def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
@@ -308,11 +320,15 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               verbosity: int = 2, z3_log: bool = False,
               save_dir: str | None = None,
               show_progress: bool = True,
-              on_result=None) -> tuple[SweepTable, list[RunResult]]:
+              on_result=None,
+              stop_when=None) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults.
 
     If `on_result` is given, it is invoked with each RunResult as soon as
     that run finishes (enables streaming CSV output from the CLI).
+
+    If `stop_when(result)` returns truthy, the sweep aborts after processing
+    that result: pending futures are cancelled and running workers killed.
     """
 
     if save_dir:
@@ -350,7 +366,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                 f"[yellow]unk={status_counts['unknown']}[/yellow] "
                 f"err={status_counts['error']}")
 
-    def process_result(result: RunResult):
+    def process_result(result: RunResult) -> bool:
+        """Return True to request early termination of the sweep."""
         table.add_result(result.config, result.seed, result.status, result.time_s)
         all_results.append(result)
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
@@ -358,6 +375,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             on_result(result)
         if progress:
             progress.update(task_id, advance=1, description=_tally_desc())
+        return bool(stop_when(result)) if stop_when is not None else False
 
     # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
     # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
@@ -372,7 +390,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                     result = run_single(z3_bin, smt_file, seed, config,
                                         timeout, trace_tags, verbosity, z3_log,
                                         save_dir, parent_tmpdir=sweep_tmp)
-                    process_result(result)
+                    if process_result(result):
+                        break
             else:
                 _run_parallel(
                     work, jobs, process_result,
