@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -387,6 +387,10 @@ def _run_parallel(work, jobs, process_result, closed_splits, *, z3_bin,
         for f in as_completed(futures):
             try:
                 result = f.result()
+            except CancelledError:
+                # Pending future belonging to a split we already closed.
+                # No RunResult to record; skip silently.
+                continue
             except BrokenProcessPool:
                 # A worker died unexpectedly; treat as interruption.
                 raise KeyboardInterrupt from None
