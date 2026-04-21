@@ -1,7 +1,9 @@
 """lemur sweep: Run Z3 on a benchmark across seeds and configurations."""
 
 import csv
+import itertools
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +12,17 @@ from rich.text import Text
 
 from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
+
+
+def _parse_grid(spec: str) -> tuple[str, list[str]]:
+    """Parse '--grid key=v1,v2,v3' into (key, [v1, v2, v3])."""
+    if '=' not in spec:
+        raise ValueError(f"--grid spec must be 'key=v1,v2,...': {spec!r}")
+    key, vals = spec.split('=', 1)
+    values = [v.strip() for v in vals.split(',') if v.strip()]
+    if not values:
+        raise ValueError(f"--grid spec has no values: {spec!r}")
+    return key.strip(), values
 
 
 def register(subparsers):
@@ -23,10 +36,13 @@ def register(subparsers):
     p.add_argument('--config', action='append', default=[],
                    help='Config spec: "name: key=val key=val". Repeatable. '
                         'Quote values with whitespace: key="(then simplify smt)".')
+    p.add_argument('--grid', action='append', default=[],
+                   help='Grid spec: "key=v1,v2,v3". Repeatable. '
+                        'Cross-products into configs, combined with --config as bases.')
     p.add_argument('--z3', default=None,
                    help='Path to z3 binary (default: ~/ag/z3/z3-edge/build/z3)')
-    p.add_argument('--jobs', '-j', type=int, default=1,
-                   help='Parallel jobs (default: 1)')
+    p.add_argument('--jobs', '-j', default='1',
+                   help="Parallel jobs: int or 'auto' (= os.cpu_count()). Default: 1.")
     p.add_argument('--trace', default=None,
                    help='Comma-separated trace tags to enable (e.g., nla_solver,nra)')
     p.add_argument('--verbosity', type=int, default=2,
@@ -59,15 +75,49 @@ def run(args):
         sys.exit(1)
     z3_bin = str(z3_path.resolve())
 
+    # Resolve --jobs (int or 'auto')
+    if isinstance(args.jobs, str) and args.jobs.lower() == 'auto':
+        jobs = os.cpu_count() or 1
+    else:
+        try:
+            jobs = int(args.jobs)
+        except (TypeError, ValueError):
+            print(f"Error: --jobs must be an integer or 'auto' (got {args.jobs!r})",
+                  file=sys.stderr)
+            sys.exit(1)
+
     # Parse seeds
     seeds = parse_seed_range(args.seeds)
 
-    # Parse configs
+    # Parse base configs (from --config)
     configs = []
     if args.config:
         for spec in args.config:
             configs.append(RunConfig.parse(spec))
-    else:
+
+    # Apply --grid expansion: cross-product of grid values, multiplied by
+    # each base config (or applied standalone if no --config given).
+    if args.grid:
+        try:
+            grid_specs = [_parse_grid(g) for g in args.grid]
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        grid_keys = [k for k, _ in grid_specs]
+        value_lists = [vs for _, vs in grid_specs]
+
+        bases = configs if configs else [RunConfig(name='', params={})]
+        configs = []
+        for base in bases:
+            for combo in itertools.product(*value_lists):
+                params = dict(base.params)
+                for k, v in zip(grid_keys, combo):
+                    params[k] = v
+                combo_name = '_'.join(combo)
+                name = f"{base.name}.{combo_name}" if base.name else combo_name
+                configs.append(RunConfig(name=name, params=params))
+
+    if not configs:
         configs.append(RunConfig(name='default', params={}))
 
     # Parse trace tags
@@ -92,7 +142,7 @@ def run(args):
         console.print(f"  z3: {z3_bin}")
         console.print(f"  seeds: {seeds[0]}-{seeds[-1]} ({len(seeds)} seeds)")
         console.print(f"  configs: {', '.join(c.name for c in configs)}")
-        console.print(f"  timeout: {args.timeout}s, jobs: {args.jobs}")
+        console.print(f"  timeout: {args.timeout}s, jobs: {jobs}")
         if trace_tags:
             console.print(f"  trace: {', '.join(trace_tags)}")
         console.print()
@@ -114,7 +164,7 @@ def run(args):
         seeds=seeds,
         configs=configs,
         timeout=args.timeout,
-        jobs=args.jobs,
+        jobs=jobs,
         trace_tags=trace_tags,
         verbosity=args.verbosity,
         z3_log=args.z3_log,
