@@ -71,6 +71,7 @@ class RunResult:
     trace_file: Path | None  # path to saved trace, if any
     cmdline: str = ''  # copy-pasteable z3 command for manual re-run
     stats: dict | None = None  # parsed z3 -st stats, when --stats enabled
+    split: str | None = None  # split name, when --split used
 
 
 _STATS_BLOCK_RE = re.compile(r'\(\s*(:[\s\S]+?)\)\s*\Z')
@@ -138,10 +139,12 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                verbosity: int = 2, z3_log: bool = False,
                save_dir: str | None = None,
                parent_tmpdir: str | None = None,
-               stats: bool = False) -> RunResult:
+               stats: bool = False,
+               split_name: str | None = None) -> RunResult:
     """Run a single Z3 invocation in a temp directory."""
 
-    tmpdir = tempfile.mkdtemp(prefix=f"lemur_{config.name}_s{seed}_",
+    name_tag = f"{split_name}.{config.name}" if split_name else config.name
+    tmpdir = tempfile.mkdtemp(prefix=f"lemur_{name_tag}_s{seed}_",
                               dir=parent_tmpdir)
     _active_temp_dirs.add(tmpdir)
 
@@ -226,7 +229,8 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         # Save outputs when --save is used
         trace_dest = None
         if save_dir:
-            prefix = Path(save_dir) / f"{config.name}_s{seed}"
+            save_stem = f"{split_name}.{config.name}" if split_name else config.name
+            prefix = Path(save_dir) / f"{save_stem}_s{seed}"
 
             # Trace file
             trace_src = Path(tmpdir) / '.z3-trace'
@@ -262,6 +266,7 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             trace_file=trace_dest,
             cmdline=cmdline,
             stats=stats_data,
+            split=split_name,
         )
 
     except (KeyboardInterrupt, SystemExit):
@@ -274,7 +279,7 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         return RunResult(
             config=config.name, seed=seed, status='error',
             time_s=0.0, stdout='', stderr=str(e), trace_file=None,
-            cmdline=cmdline,
+            cmdline=cmdline, split=split_name,
         )
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -323,20 +328,46 @@ def _cancel_and_shutdown(executor, futures):
     executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
+def make_split_smt(src_path: str, inject: str, dest_path: str) -> None:
+    """Write a copy of `src_path` with `inject` placed before the first
+    non-commented `(check-sat)`. If no `(check-sat)` is found, one is appended
+    along with the injection."""
+    content = Path(src_path).read_text()
+    lines = content.split('\n')
+    out_lines: list[str] = []
+    injected = False
+    for line in lines:
+        code = line
+        if ';' in code:
+            code = code[:code.index(';')]
+        if not injected and '(check-sat)' in code:
+            out_lines.append('; --- lemur split injection ---')
+            out_lines.append(inject)
+            out_lines.append('; --- end injection ---')
+            injected = True
+        out_lines.append(line)
+    if not injected:
+        out_lines.append('; --- lemur split injection ---')
+        out_lines.append(inject)
+        out_lines.append('(check-sat)')
+    Path(dest_path).write_text('\n'.join(out_lines))
+
+
+def _run_parallel(work, jobs, process_result, *, z3_bin, timeout,
                   trace_tags, verbosity, z3_log, save_dir, parent_tmpdir,
                   stats):
-    """Run work items in a process pool. `process_result(result)` returns True
-    to request early termination (cancels pending, force-shuts workers)."""
+    """Run work items in a process pool. Each work item is
+    (split_name, smt_path, config, seed). `process_result(result)` returns
+    True to request early termination."""
     executor = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker)
     futures = {}
     stopped_early = False
     try:
-        for config, seed in work:
-            f = executor.submit(run_single, z3_bin, smt_file, seed, config,
+        for split_name, smt_path, config, seed in work:
+            f = executor.submit(run_single, z3_bin, smt_path, seed, config,
                                 timeout, trace_tags, verbosity, z3_log,
-                                save_dir, parent_tmpdir, stats)
-            futures[f] = (config.name, seed)
+                                save_dir, parent_tmpdir, stats, split_name)
+            futures[f] = (split_name, config.name, seed)
 
         for f in as_completed(futures):
             try:
@@ -365,7 +396,9 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               show_progress: bool = True,
               on_result=None,
               stop_when=None,
-              stats: bool = False) -> tuple[SweepTable, list[RunResult]]:
+              stats: bool = False,
+              splits: list[tuple[str, str]] | None = None
+              ) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults.
 
     If `on_result` is given, it is invoked with each RunResult as soon as
@@ -373,6 +406,9 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
 
     If `stop_when(result)` returns truthy, the sweep aborts after processing
     that result: pending futures are cancelled and running workers killed.
+
+    If `splits` is given (list of (name, smt_to_inject)), a modified benchmark
+    is generated per split and the sweep cross-products splits × configs × seeds.
     """
 
     if save_dir:
@@ -381,11 +417,29 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
     config_names = [c.name for c in configs]
     table = SweepTable(config_names, seeds)
     all_results: list[RunResult] = []
-    total = len(configs) * len(seeds)
     status_counts = {'sat': 0, 'unsat': 0, 'timeout': 0, 'unknown': 0, 'error': 0}
 
-    # Build work items
-    work = [(config, seed) for config in configs for seed in seeds]
+    # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
+    # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
+    sweep_tmp = tempfile.mkdtemp(prefix='lemur_sweep_')
+    _active_temp_dirs.add(sweep_tmp)
+
+    # Build (split_name, smt_path) tuples. None split = original benchmark.
+    if splits:
+        split_files: list[tuple[str | None, str]] = []
+        for name, inject in splits:
+            dest = os.path.join(sweep_tmp, f"split_{name}.smt2")
+            make_split_smt(smt_file, inject, dest)
+            split_files.append((name, dest))
+    else:
+        split_files = [(None, smt_file)]
+
+    # Build work items: split × config × seed
+    work = [(sname, spath, config, seed)
+            for sname, spath in split_files
+            for config in configs
+            for seed in seeds]
+    total = len(work)
 
     if show_progress:
         console = make_console()
@@ -421,26 +475,21 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             progress.update(task_id, advance=1, description=_tally_desc())
         return bool(stop_when(result)) if stop_when is not None else False
 
-    # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
-    # single rmtree at the end cleans up even if a worker was killed mid-cleanup.
-    sweep_tmp = tempfile.mkdtemp(prefix='lemur_sweep_')
-    _active_temp_dirs.add(sweep_tmp)
-
     ctx = progress if progress else _nullcontext()
     try:
         with ctx:
             if jobs == 1:
-                for config, seed in work:
-                    result = run_single(z3_bin, smt_file, seed, config,
+                for sname, spath, config, seed in work:
+                    result = run_single(z3_bin, spath, seed, config,
                                         timeout, trace_tags, verbosity, z3_log,
                                         save_dir, parent_tmpdir=sweep_tmp,
-                                        stats=stats)
+                                        stats=stats, split_name=sname)
                     if process_result(result):
                         break
             else:
                 _run_parallel(
                     work, jobs, process_result,
-                    z3_bin=z3_bin, smt_file=smt_file, timeout=timeout,
+                    z3_bin=z3_bin, timeout=timeout,
                     trace_tags=trace_tags, verbosity=verbosity, z3_log=z3_log,
                     save_dir=save_dir, parent_tmpdir=sweep_tmp,
                     stats=stats,

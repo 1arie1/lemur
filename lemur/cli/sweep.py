@@ -26,6 +26,18 @@ def _parse_grid(spec: str) -> tuple[str, list[str]]:
     return key.strip(), values
 
 
+def _parse_split(spec: str) -> tuple[str, str]:
+    """Parse '--split name:smt-to-inject' into (name, smt)."""
+    if ':' not in spec:
+        raise ValueError(f"--split spec must be 'name:smt': {spec!r}")
+    name, smt = spec.split(':', 1)
+    name = name.strip()
+    smt = smt.strip()
+    if not name or not smt:
+        raise ValueError(f"--split spec has empty name or smt: {spec!r}")
+    return name, smt
+
+
 def register(subparsers):
     p = subparsers.add_parser('sweep', help='Run Z3 across seeds and configurations',
                                epilog='AI agents: use `lemur --agent` for terse usage guide.')
@@ -40,6 +52,9 @@ def register(subparsers):
     p.add_argument('--grid', action='append', default=[],
                    help='Grid spec: "key=v1,v2,v3". Repeatable. '
                         'Cross-products into configs, combined with --config as bases.')
+    p.add_argument('--split', action='append', default=[],
+                   help='Split spec: "name:<smt-to-inject>". Repeatable. '
+                        'Injected before (check-sat). Cross-products with configs × seeds.')
     p.add_argument('--z3', default=None,
                    help='Path to z3 binary (default: ~/ag/z3/z3-edge/build/z3)')
     p.add_argument('--jobs', '-j', default='1',
@@ -130,6 +145,15 @@ def run(args):
     if not configs:
         configs.append(RunConfig(name='default', params={}))
 
+    # Parse splits
+    splits = None
+    if args.split:
+        try:
+            splits = [_parse_split(s) for s in args.split]
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
     # Parse trace tags
     trace_tags = None
     if args.trace:
@@ -161,12 +185,21 @@ def run(args):
     on_result = None
     if effective_fmt == 'plain':
         writer = csv.writer(sys.stdout)
-        writer.writerow(["config", "seed", "status", "time_s"])
+        header = ["split", "config", "seed", "status", "time_s"] if splits \
+                 else ["config", "seed", "status", "time_s"]
+        writer.writerow(header)
         sys.stdout.flush()
 
-        def on_result(r):
-            writer.writerow([r.config, r.seed, r.status, f"{r.time_s:.3f}"])
-            sys.stdout.flush()
+        if splits:
+            def on_result(r):
+                writer.writerow([r.split or '', r.config, r.seed, r.status,
+                                 f"{r.time_s:.3f}"])
+                sys.stdout.flush()
+        else:
+            def on_result(r):
+                writer.writerow([r.config, r.seed, r.status,
+                                 f"{r.time_s:.3f}"])
+                sys.stdout.flush()
 
     # Build the early-termination predicate.
     stop_when = None
@@ -192,17 +225,21 @@ def run(args):
         on_result=on_result,
         stop_when=stop_when,
         stats=args.stats,
+        splits=splits,
     )
 
     if show_progress and console:
         console.print()
 
     # Plain rows were already streamed; only render final table for rich/json.
-    if effective_fmt != 'plain':
+    # Skip the flat SweepTable when splits are used (it doesn't model the split
+    # dimension); the tally below gives the per-(split, config) view instead.
+    if effective_fmt != 'plain' and not splits:
         output(table, fmt=effective_fmt, console=console)
 
-    # Per-config aggregation
-    if args.tally and results:
+    # Per-config aggregation. Force-on when splits are in play, since the
+    # flat SweepTable above was skipped.
+    if (args.tally or splits) and results:
         tally = tally_mod.compute_tally(results)
         if effective_fmt == 'rich':
             if console:
