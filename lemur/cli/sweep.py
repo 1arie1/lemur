@@ -12,6 +12,7 @@ from rich.text import Text
 
 from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
+from lemur import tally as tally_mod
 
 
 def _parse_grid(spec: str) -> tuple[str, list[str]]:
@@ -57,6 +58,8 @@ def register(subparsers):
                    help='Disable color output')
     p.add_argument('--no-commands', action='store_true',
                    help='Hide z3 command lines from output')
+    p.add_argument('--tally', action='store_true',
+                   help='Print per-config aggregation after results')
     p.set_defaults(func=run)
 
 
@@ -179,6 +182,19 @@ def run(args):
     # Plain rows were already streamed; only render final table for rich/json.
     if effective_fmt != 'plain':
         output(table, fmt=effective_fmt, console=console)
+
+    # Per-config aggregation
+    if args.tally and results:
+        tally = tally_mod.compute_tally(results)
+        if effective_fmt == 'rich':
+            if console:
+                console.print()
+            tally_mod.render_rich(tally, console or make_console(no_color=args.no_color))
+        elif effective_fmt == 'json':
+            print(tally_mod.to_json(tally))
+        else:  # plain
+            print()
+            print(tally_mod.to_csv(tally), end='')
 
     # Print command lines for manual re-run
     if results and not args.no_commands:
