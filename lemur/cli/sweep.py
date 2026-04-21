@@ -52,6 +52,9 @@ def register(subparsers):
                    help='Enable z3 AST trace log (trace=true). Requires --save.')
     p.add_argument('--save', default=None,
                    help='Directory to save raw outputs and traces')
+    p.add_argument('--stats', action='store_true',
+                   help='Enable z3 -st statistics; when combined with --save '
+                        'writes <config>_s<seed>.stats.json per run')
     p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                    help='Output format (default: rich for TTY, plain otherwise)')
     p.add_argument('--no-color', action='store_true',
@@ -188,6 +191,7 @@ def run(args):
         show_progress=show_progress,
         on_result=on_result,
         stop_when=stop_when,
+        stats=args.stats,
     )
 
     if show_progress and console:

@@ -6,7 +6,9 @@ Temp directories are cleaned up on completion and on unexpected exit.
 """
 
 import atexit
+import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -16,7 +18,7 @@ import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
@@ -68,6 +70,33 @@ class RunResult:
     stderr: str
     trace_file: Path | None  # path to saved trace, if any
     cmdline: str = ''  # copy-pasteable z3 command for manual re-run
+    stats: dict | None = None  # parsed z3 -st stats, when --stats enabled
+
+
+_STATS_BLOCK_RE = re.compile(r'\(\s*(:[\s\S]+?)\)\s*\Z')
+_STATS_KV_RE = re.compile(r':([\w\-.]+)\s+(\S+)')
+
+
+def parse_z3_stats(stdout: str) -> dict | None:
+    """Extract z3 `-st` statistics block from stdout.
+
+    z3 appends a trailing S-expression like `(:key value :key value ...)`.
+    Returns a dict keyed by stat name (numbers parsed to int/float).
+    """
+    m = _STATS_BLOCK_RE.search(stdout)
+    if not m:
+        return None
+    stats: dict = {}
+    for match in _STATS_KV_RE.finditer(m.group(1)):
+        key, val = match.group(1), match.group(2)
+        try:
+            stats[key] = int(val)
+        except ValueError:
+            try:
+                stats[key] = float(val)
+            except ValueError:
+                stats[key] = val
+    return stats or None
 
 
 # Temp dirs created by in-flight runs, cleaned up on normal or abnormal exit.
@@ -108,7 +137,8 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
                timeout: int, trace_tags: list[str] | None = None,
                verbosity: int = 2, z3_log: bool = False,
                save_dir: str | None = None,
-               parent_tmpdir: str | None = None) -> RunResult:
+               parent_tmpdir: str | None = None,
+               stats: bool = False) -> RunResult:
     """Run a single Z3 invocation in a temp directory."""
 
     tmpdir = tempfile.mkdtemp(prefix=f"lemur_{config.name}_s{seed}_",
@@ -132,6 +162,10 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         # Enable AST trace log if requested (writes to z3.log in CWD)
         if z3_log:
             cmd.extend(['trace=true', 'trace_file_name=z3.log'])
+
+        # Enable z3 statistics output
+        if stats:
+            cmd.append('-st')
 
         # Add verbosity, seed, and timeout
         cmd.extend([
@@ -187,6 +221,8 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         else:
             status = 'error'
 
+        stats_data = parse_z3_stats(stdout) if stats else None
+
         # Save outputs when --save is used
         trace_dest = None
         if save_dir:
@@ -211,6 +247,11 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             if z3_log_src.exists() and z3_log_src.stat().st_size > 0:
                 shutil.copy2(z3_log_src, prefix.with_suffix('.z3log'))
 
+            # Parsed z3 stats
+            if stats_data is not None:
+                prefix.with_suffix('.stats.json').write_text(
+                    json.dumps(stats_data, indent=2))
+
         return RunResult(
             config=config.name,
             seed=seed,
@@ -220,6 +261,7 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
             stderr=stderr,
             trace_file=trace_dest,
             cmdline=cmdline,
+            stats=stats_data,
         )
 
     except (KeyboardInterrupt, SystemExit):
@@ -282,7 +324,8 @@ def _cancel_and_shutdown(executor, futures):
 
 
 def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
-                  trace_tags, verbosity, z3_log, save_dir, parent_tmpdir):
+                  trace_tags, verbosity, z3_log, save_dir, parent_tmpdir,
+                  stats):
     """Run work items in a process pool. `process_result(result)` returns True
     to request early termination (cancels pending, force-shuts workers)."""
     executor = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker)
@@ -292,7 +335,7 @@ def _run_parallel(work, jobs, process_result, *, z3_bin, smt_file, timeout,
         for config, seed in work:
             f = executor.submit(run_single, z3_bin, smt_file, seed, config,
                                 timeout, trace_tags, verbosity, z3_log,
-                                save_dir, parent_tmpdir)
+                                save_dir, parent_tmpdir, stats)
             futures[f] = (config.name, seed)
 
         for f in as_completed(futures):
@@ -321,7 +364,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               save_dir: str | None = None,
               show_progress: bool = True,
               on_result=None,
-              stop_when=None) -> tuple[SweepTable, list[RunResult]]:
+              stop_when=None,
+              stats: bool = False) -> tuple[SweepTable, list[RunResult]]:
     """Run a full sweep and return a populated SweepTable and all RunResults.
 
     If `on_result` is given, it is invoked with each RunResult as soon as
@@ -389,7 +433,8 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                 for config, seed in work:
                     result = run_single(z3_bin, smt_file, seed, config,
                                         timeout, trace_tags, verbosity, z3_log,
-                                        save_dir, parent_tmpdir=sweep_tmp)
+                                        save_dir, parent_tmpdir=sweep_tmp,
+                                        stats=stats)
                     if process_result(result):
                         break
             else:
@@ -398,6 +443,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
                     z3_bin=z3_bin, smt_file=smt_file, timeout=timeout,
                     trace_tags=trace_tags, verbosity=verbosity, z3_log=z3_log,
                     save_dir=save_dir, parent_tmpdir=sweep_tmp,
+                    stats=stats,
                 )
     except KeyboardInterrupt:
         print("\n[interrupted] killing running z3 processes and cleaning up...",

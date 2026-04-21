@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from lemur.cli import sweep, stats, nla, tally
+from lemur.cli import sweep, stats, nla, tally, stats_compare
 
 AGENT_HELP = """\
 lemur: z3 trace analysis. four subcommands.
@@ -56,6 +56,7 @@ def main():
     stats.register(sub)
     nla.register(sub)
     tally.register(sub)
+    stats_compare.register(sub)
 
     args, remaining = parser.parse_known_args()
 
