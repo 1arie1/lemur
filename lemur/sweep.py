@@ -32,7 +32,11 @@ class RunConfig:
 
     @classmethod
     def parse(cls, spec: str) -> 'RunConfig':
-        """Parse 'name: key=val key=val ...' or '"name with spaces": key=val ...'"""
+        """Parse 'name: key=val key=val ...' or '"name with spaces": key=val ...'.
+
+        Values containing whitespace must be quoted, e.g.
+          myconf: tactic.default_tactic="(then simplify smt)"
+        """
         spec = spec.strip()
         # Handle quoted name
         if spec.startswith('"'):
@@ -45,7 +49,9 @@ class RunConfig:
             rest = parts[1].strip() if len(parts) > 1 else ''
 
         params = {}
-        for token in rest.split():
+        # shlex.split respects quoting so whitespace inside quoted values is
+        # preserved (e.g. tactic.default_tactic="(then simplify smt)").
+        for token in shlex.split(rest):
             if '=' in token:
                 k, v = token.split('=', 1)
                 params[k] = v
@@ -301,8 +307,13 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
               trace_tags: list[str] | None = None,
               verbosity: int = 2, z3_log: bool = False,
               save_dir: str | None = None,
-              show_progress: bool = True) -> tuple[SweepTable, list[RunResult]]:
-    """Run a full sweep and return a populated SweepTable and all RunResults."""
+              show_progress: bool = True,
+              on_result=None) -> tuple[SweepTable, list[RunResult]]:
+    """Run a full sweep and return a populated SweepTable and all RunResults.
+
+    If `on_result` is given, it is invoked with each RunResult as soon as
+    that run finishes (enables streaming CSV output from the CLI).
+    """
 
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
@@ -311,6 +322,7 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
     table = SweepTable(config_names, seeds)
     all_results: list[RunResult] = []
     total = len(configs) * len(seeds)
+    status_counts = {'sat': 0, 'unsat': 0, 'timeout': 0, 'unknown': 0, 'error': 0}
 
     # Build work items
     work = [(config, seed) for config in configs for seed in seeds]
@@ -325,16 +337,27 @@ def run_sweep(z3_bin: str, smt_file: str, seeds: list[int],
             TimeElapsedColumn(),
             console=console,
         )
-        task_id = progress.add_task("Sweeping", total=total)
+        task_id = progress.add_task("Sweeping  sat=0 unsat=0 to=0 unk=0 err=0",
+                                    total=total)
     else:
         progress = None
+
+    def _tally_desc() -> str:
+        return (f"Sweeping  "
+                f"[green]sat={status_counts['sat']}[/green] "
+                f"[cyan]unsat={status_counts['unsat']}[/cyan] "
+                f"[red]to={status_counts['timeout']}[/red] "
+                f"[yellow]unk={status_counts['unknown']}[/yellow] "
+                f"err={status_counts['error']}")
 
     def process_result(result: RunResult):
         table.add_result(result.config, result.seed, result.status, result.time_s)
         all_results.append(result)
+        status_counts[result.status] = status_counts.get(result.status, 0) + 1
+        if on_result is not None:
+            on_result(result)
         if progress:
-            desc = f"[dim]{result.config}[/dim] s{result.seed}: {result.status}"
-            progress.update(task_id, advance=1, description=desc)
+            progress.update(task_id, advance=1, description=_tally_desc())
 
     # Per-sweep parent tmpdir: every run_single tmpdir nests under this, so a
     # single rmtree at the end cleans up even if a worker was killed mid-cleanup.

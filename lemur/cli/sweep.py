@@ -1,5 +1,6 @@
 """lemur sweep: Run Z3 on a benchmark across seeds and configurations."""
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -20,7 +21,8 @@ def register(subparsers):
     p.add_argument('--timeout', type=int, default=30,
                    help='Timeout per run in seconds (default: 30)')
     p.add_argument('--config', action='append', default=[],
-                   help='Config spec: "name: key=val key=val". Repeatable.')
+                   help='Config spec: "name: key=val key=val". Repeatable. '
+                        'Quote values with whitespace: key="(then simplify smt)".')
     p.add_argument('--z3', default=None,
                    help='Path to z3 binary (default: ~/ag/z3/z3-edge/build/z3)')
     p.add_argument('--jobs', '-j', type=int, default=1,
@@ -80,9 +82,10 @@ def run(args):
 
     # Determine output format
     fmt = args.format
-    show_progress = (fmt is None or fmt == 'rich') and sys.stdout.isatty()
+    effective_fmt = fmt if fmt is not None else ('rich' if sys.stdout.isatty() else 'plain')
+    show_progress = effective_fmt == 'rich' and sys.stdout.isatty()
 
-    console = make_console(no_color=args.no_color) if fmt != 'plain' and fmt != 'json' else None
+    console = make_console(no_color=args.no_color) if effective_fmt == 'rich' else None
 
     if show_progress and console:
         console.print(f"[bold]lemur sweep[/bold] {benchmark.name}")
@@ -93,6 +96,17 @@ def run(args):
         if trace_tags:
             console.print(f"  trace: {', '.join(trace_tags)}")
         console.print()
+
+    # Stream CSV rows to stdout as they complete (plain format only).
+    on_result = None
+    if effective_fmt == 'plain':
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["config", "seed", "status", "time_s"])
+        sys.stdout.flush()
+
+        def on_result(r):
+            writer.writerow([r.config, r.seed, r.status, f"{r.time_s:.3f}"])
+            sys.stdout.flush()
 
     table, results = run_sweep(
         z3_bin=z3_bin,
@@ -106,12 +120,15 @@ def run(args):
         z3_log=args.z3_log,
         save_dir=args.save,
         show_progress=show_progress,
+        on_result=on_result,
     )
 
     if show_progress and console:
         console.print()
 
-    output(table, fmt=fmt, console=console)
+    # Plain rows were already streamed; only render final table for rich/json.
+    if effective_fmt != 'plain':
+        output(table, fmt=effective_fmt, console=console)
 
     # Print command lines for manual re-run
     if results and not args.no_commands:
