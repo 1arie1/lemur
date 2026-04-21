@@ -131,3 +131,17 @@ lemur/
   report.py                 Lemma rendering, humanization, strategy names
 tests/sample_traces/        Sample trace files for testing
 ```
+
+## 👥 Contributors
+
+- **Arie Gurfinkel** &lt;arie@certora.com&gt; — author and maintainer
+
+Much of the implementation was iterated on with Claude Code (Opus 4.6 /
+4.7). See `Co-Authored-By` trailers on individual commits for provenance.
+
+Contributions welcome — open an issue or PR.
+
+## 📜 License
+
+MIT — see [`LICENSE`](LICENSE).
+

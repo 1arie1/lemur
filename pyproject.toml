@@ -7,6 +7,10 @@ name = "lemur"
 version = "0.1.0"
 description = "Z3 trace analysis and debugging toolkit"
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Arie Gurfinkel", email = "arie@certora.com" },
+]
 dependencies = [
     "rich>=13.0",
 ]
