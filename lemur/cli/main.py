@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from lemur.cli import sweep, stats, nla, tally, stats_compare
+from lemur.cli import sweep, stats, nla, tally, stats_compare, search
 
 AGENT_HELP = """\
 lemur: z3 trace analysis. four subcommands.
@@ -18,6 +18,11 @@ lemur sweep BENCH.smt2 --seeds 0-15 --timeout 30
 
 lemur tally SWEEP.csv
   aggregate a saved sweep CSV: counts (sat/unsat/to/unk/err) and fastest-sat/unsat per config.
+
+lemur search TRACE PATTERN [--tag RE] [--fn RE] [-n] [--entries]
+  regex search over trace body lines (grep-like). --tag/--fn are also regexes
+  (re.search; anchor with ^/$). --entries prints full header+body context.
+  -n prefixes with line numbers. -i/-v/-c/--max-count standard.
 
 lemur stats TRACE
   general trace stats: tag counts, function frequency, entry counts.
@@ -63,6 +68,7 @@ def main():
     nla.register(sub)
     tally.register(sub)
     stats_compare.register(sub)
+    search.register(sub)
 
     args, remaining = parser.parse_known_args()
 
