@@ -7,9 +7,6 @@ import os
 import sys
 from pathlib import Path
 
-from rich.panel import Panel
-from rich.text import Text
-
 from lemur.sweep import RunConfig, run_sweep, parse_seed_range
 from lemur.table import output, make_console
 from lemur import tally as tally_mod
@@ -359,11 +356,10 @@ def run(args):
         else:
             if console:
                 console.print()
-                lines = Text()
-                for i, (config, cmdline) in enumerate(cmds):
-                    if i > 0:
-                        lines.append("\n")
-                    lines.append(f"# {config}\n", style="bold dim")
-                    lines.append(cmdline)
-                console.print(Panel(lines, title="Commands (change seeds to re-run)",
-                                    expand=False))
+                console.print("[bold]Commands[/bold] [dim](change seeds to re-run)[/dim]")
+                # Print each command on its own line, unboxed, so it's
+                # copy-paste friendly. The `# name` comment line keeps a
+                # subtle style but the command itself is plain text.
+                for config, cmdline in cmds:
+                    console.print(f"[bold dim]# {config}[/bold dim]")
+                    console.print(cmdline, highlight=False, markup=False, soft_wrap=True)
