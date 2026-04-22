@@ -25,6 +25,7 @@ Design notes:
 
 from __future__ import annotations
 
+import gc
 import json
 import re
 import shutil
@@ -98,65 +99,60 @@ class _Metrics:
     is_qflia: bool = False
 
 
-def _ast_walk_counts(z3, exprs):
-    """Count ITE, IDIV, MOD ops by DAG-traversal of `exprs` list."""
-    num_ites = num_divs = num_mods = 0
-    seen = set()
-    stack = list(exprs)
-    while stack:
-        e = stack.pop()
-        eid = e.get_id()
-        if eid in seen:
-            continue
-        seen.add(eid)
-        if z3.is_app(e):
-            k = e.decl().kind()
-            if k == z3.Z3_OP_ITE:
-                num_ites += 1
-            elif k == z3.Z3_OP_IDIV:
-                num_divs += 1
-            elif k == z3.Z3_OP_MOD:
-                num_mods += 1
-            for i in range(e.num_args()):
-                stack.append(e.arg(i))
-    return num_ites, num_divs, num_mods
+def _walk_subgoal(z3, sg, seen: set, counters: list):
+    """DAG-walk a single subgoal, accumulating ITE/IDIV/MOD counts in counters.
+    `seen` and `counters` are mutated in place so callers can share them across
+    subgoals without building giant intermediate expression lists.
+
+    counters = [num_ites, num_divs, num_mods]."""
+    for i in range(sg.size()):
+        stack = [sg[i]]
+        while stack:
+            e = stack.pop()
+            eid = e.get_id()
+            if eid in seen:
+                continue
+            seen.add(eid)
+            if z3.is_app(e):
+                k = e.decl().kind()
+                if k == z3.Z3_OP_ITE:
+                    counters[0] += 1
+                elif k == z3.Z3_OP_IDIV:
+                    counters[1] += 1
+                elif k == z3.Z3_OP_MOD:
+                    counters[2] += 1
+                for j in range(e.num_args()):
+                    stack.append(e.arg(j))
 
 
-def _measure_goal(z3, goal) -> _Metrics:
-    """Compute metrics on a Goal (or a list of subgoals summed)."""
-    subgoals = [goal] if hasattr(goal, 'size') and not hasattr(goal, '__iter__') else list(goal)
-    # Probes only work on Goal objects. If given ApplyResult, iterate subgoals.
+def _measure_apply_result(z3, result, probes: dict) -> _Metrics:
+    """Sum-aggregate metrics across all subgoals of an ApplyResult.
+
+    Takes cached probes so we don't re-construct them on every call (each
+    `z3.Probe(name)` allocates a native object)."""
     m = _Metrics()
-    all_exprs = []
-    for sg in subgoals:
+    seen: set = set()
+    counters = [0, 0, 0]  # ites, divs, mods
+    n = len(result)
+    for i in range(n):
+        sg = result[i]
         try:
-            m.num_exprs += int(z3.Probe('num-exprs')(sg))
+            m.num_exprs += int(probes['num-exprs'](sg))
         except Exception:
             pass
         try:
-            deg = int(z3.Probe('arith-max-deg')(sg))
+            deg = int(probes['arith-max-deg'](sg))
             if deg > m.arith_max_deg:
                 m.arith_max_deg = deg
         except Exception:
             pass
         try:
-            is_lia = bool(z3.Probe('is-qflia')(sg))
-            m.is_qflia = m.is_qflia or is_lia
+            m.is_qflia = m.is_qflia or bool(probes['is-qflia'](sg))
         except Exception:
             pass
-        for i in range(sg.size()):
-            all_exprs.append(sg[i])
-    ni, nd, nm = _ast_walk_counts(z3, all_exprs)
-    m.num_ites = ni
-    m.num_divs = nd
-    m.num_mods = nm
+        _walk_subgoal(z3, sg, seen, counters)
+    m.num_ites, m.num_divs, m.num_mods = counters
     return m
-
-
-def _measure_apply_result(z3, result) -> _Metrics:
-    """Sum-aggregate metrics across all subgoals of an ApplyResult."""
-    subgoals = [result[i] for i in range(len(result))]
-    return _measure_goal(z3, subgoals)
 
 
 def _gain(base: _Metrics, leaf: _Metrics) -> float:
@@ -250,23 +246,83 @@ def _simplify_tactic(z3, timeout_s: float):
     return z3.TryFor(t, int(timeout_s * 1000))
 
 
-def _apply_with_assumption(z3, goal, name: str, value: bool, tactic):
-    """Clone `goal`, add `C=value`, apply `tactic`. Return (ApplyResult | None,
-    collapsed_to_false: bool, elapsed_ms: float). None result means the tactic
-    raised (timeout / z3 exception)."""
+def _score_with_assumption(z3, goal, name: str, value: bool, tactic,
+                           base_metrics: _Metrics, probes: dict):
+    """Clone `goal`, add `C=value`, apply `tactic`, compute the gain score.
+
+    Returns (gain: float, collapsed: bool, elapsed_ms: float). The
+    ApplyResult and temporary Goal are scoped to this function and dropped
+    before return so z3 native refs don't accumulate across iterations."""
     g2 = z3.Goal()
     for i in range(goal.size()):
         g2.add(goal[i])
-    C = z3.Bool(name)
-    g2.add(C if value else z3.Not(C))
+    g2.add(z3.Bool(name) if value else z3.Not(z3.Bool(name)))
     start = time.monotonic()
     try:
         r = tactic.apply(g2)
     except z3.Z3Exception:
-        return None, False, (time.monotonic() - start) * 1000
+        return 0.0, False, (time.monotonic() - start) * 1000
     elapsed_ms = (time.monotonic() - start) * 1000
-    collapsed = any(r[i].inconsistent() for i in range(len(r)))
-    return r, collapsed, elapsed_ms
+    try:
+        collapsed = any(r[i].inconsistent() for i in range(len(r)))
+        if collapsed:
+            return _SCORE_COLLAPSE, True, elapsed_ms
+        leaf_metrics = _measure_apply_result(z3, r, probes)
+    finally:
+        # Explicit release — these hold native z3 refs we don't need anymore.
+        del r
+        del g2
+    return _gain(base_metrics, leaf_metrics), False, elapsed_ms
+
+
+def _apply_measure(z3, goal, tactic, probes: dict) -> _Metrics:
+    """Apply `tactic` to `goal`, measure, and drop the ApplyResult before
+    returning so no native ref leaks out."""
+    try:
+        r = tactic.apply(goal)
+    except z3.Z3Exception:
+        # Fall back to measuring the unsimplified goal.
+        m = _Metrics()
+        seen: set = set()
+        counters = [0, 0, 0]
+        try:
+            m.num_exprs = int(probes['num-exprs'](goal))
+        except Exception:
+            pass
+        try:
+            m.arith_max_deg = int(probes['arith-max-deg'](goal))
+        except Exception:
+            pass
+        try:
+            m.is_qflia = bool(probes['is-qflia'](goal))
+        except Exception:
+            pass
+        _walk_subgoal(z3, goal, seen, counters)
+        m.num_ites, m.num_divs, m.num_mods = counters
+        return m
+    try:
+        return _measure_apply_result(z3, r, probes)
+    finally:
+        del r
+
+
+def _is_pruned(z3, goal, valuation: dict, tactic) -> bool:
+    """Return True if `goal ∧ valuation` simplifies to a false-collapsed goal.
+    ApplyResult is strictly local so no refs leak."""
+    g = z3.Goal()
+    for i in range(goal.size()):
+        g.add(goal[i])
+    for name, v in valuation.items():
+        g.add(z3.Bool(name) if v else z3.Not(z3.Bool(name)))
+    try:
+        r = tactic.apply(g)
+    except Exception:
+        return False
+    try:
+        return any(r[i].inconsistent() for i in range(len(r)))
+    finally:
+        del r
+        del g
 
 
 # --- Planning ----------------------------------------------------------------
@@ -296,15 +352,21 @@ def build_plan(
     goal = z3.Goal()
     for a in asserts:
         goal.add(a)
+    # parse_smt2_file returns an AstVector tied to the main context; drop it
+    # now that its contents are inside `goal`.
+    del asserts
 
     tactic = _simplify_tactic(z3, probe_timeout)
 
+    # Cache probe objects — each `z3.Probe(name)` call allocates a native ref.
+    probes = {
+        'num-exprs': z3.Probe('num-exprs'),
+        'arith-max-deg': z3.Probe('arith-max-deg'),
+        'is-qflia': z3.Probe('is-qflia'),
+    }
+
     current_goal = goal
-    try:
-        base_result = tactic.apply(current_goal)
-        base_metrics = _measure_apply_result(z3, base_result)
-    except z3.Z3Exception:
-        base_metrics = _measure_goal(z3, current_goal)
+    base_metrics = _apply_measure(z3, current_goal, tactic, probes)
 
     plan_cands: list[Candidate] = []
     picked_names: set[str] = set()
@@ -319,15 +381,10 @@ def build_plan(
         scored: list[tuple[str, float, str | None, dict[str, float], bool | None]] = []
         # tuple: (name, score, reduces_on, probe_ms, harder_valuation)
         for n in names:
-            r_t, c_t, ms_t = _apply_with_assumption(z3, current_goal, n, True, tactic)
-            r_f, c_f, ms_f = _apply_with_assumption(z3, current_goal, n, False, tactic)
-
-            gain_t = _SCORE_COLLAPSE if c_t else (
-                _gain(base_metrics, _measure_apply_result(z3, r_t)) if r_t is not None else 0.0
-            )
-            gain_f = _SCORE_COLLAPSE if c_f else (
-                _gain(base_metrics, _measure_apply_result(z3, r_f)) if r_f is not None else 0.0
-            )
+            gain_t, c_t, ms_t = _score_with_assumption(
+                z3, current_goal, n, True, tactic, base_metrics, probes)
+            gain_f, c_f, ms_f = _score_with_assumption(
+                z3, current_goal, n, False, tactic, base_metrics, probes)
 
             reduces_on = 'true' if c_t else ('false' if c_f else None)
 
@@ -378,24 +435,30 @@ def build_plan(
         next_goal = z3.Goal()
         for i in range(current_goal.size()):
             next_goal.add(current_goal[i])
-        C = z3.Bool(best_name)
-        next_goal.add(C if best_harder else z3.Not(C))
+        next_goal.add(z3.Bool(best_name) if best_harder else z3.Not(z3.Bool(best_name)))
         current_goal = next_goal
-        try:
-            br = tactic.apply(current_goal)
-            base_metrics = _measure_apply_result(z3, br)
-        except z3.Z3Exception:
-            base_metrics = _measure_goal(z3, current_goal)
+        base_metrics = _apply_measure(z3, current_goal, tactic, probes)
 
     # --- Build leaf manifest (2^k valuations over the chosen plan) ---
     leaves = _build_leaf_specs(z3, goal, plan_cands, tactic)
 
-    return Plan(
+    plan = Plan(
         source=Path(src_path).name,
         source_abs=str(Path(src_path).resolve()),
         split_predicates=plan_cands,
         leaves=leaves,
     )
+
+    # Explicitly release z3 native refs before z3's atexit handler fires.
+    # Without this, stale refs in local frames can trigger "Uncollected memory"
+    # warnings from z3 on shutdown.
+    del current_goal
+    del goal
+    del tactic
+    del probes
+    gc.collect()
+
+    return plan
 
 
 def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic) -> list[LeafSpec]:
@@ -403,7 +466,6 @@ def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic) ->
     k = len(plan_cands)
     specs: list[LeafSpec] = []
     if k == 0:
-        # No splits were found; sweep will just run the original benchmark.
         return specs
 
     for bits in range(1 << k):
@@ -415,29 +477,12 @@ def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic) ->
             label_parts.append('T' if v else 'F')
         label = '_'.join(label_parts)
 
-        # Check if this valuation reduces to false under simplification.
-        g = z3.Goal()
-        for i in range(original_goal.size()):
-            g.add(original_goal[i])
-        for name, v in valuation.items():
-            C = z3.Bool(name)
-            g.add(C if v else z3.Not(C))
-
-        pruned = False
-        reason = None
-        try:
-            r = tactic.apply(g)
-            if any(r[i].inconsistent() for i in range(len(r))):
-                pruned = True
-                reason = "reduces to false"
-        except Exception:
-            pass
-
+        pruned = _is_pruned(z3, original_goal, valuation, tactic)
         specs.append(LeafSpec(
             valuation=valuation,
             file=None if pruned else f"leaf_{label}.smt2",
             pruned=pruned,
-            reason=reason,
+            reason="reduces to false" if pruned else None,
         ))
 
     return specs
