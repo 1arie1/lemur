@@ -340,10 +340,16 @@ def build_plan(
     threshold: float = 10.0,
     probe_timeout: float = 5.0,
     name_pattern: str = r'BLK__\d+',
+    log=None,
 ) -> Plan:
-    """Parse `src_path`, enumerate candidates, score + greedy plan."""
-    z3 = _import_z3()
+    """Parse `src_path`, enumerate candidates, score + greedy plan.
 
+    `log(msg)` if provided is called with short progress messages; use
+    `print` with `file=sys.stderr` to surface them to the user."""
+    z3 = _import_z3()
+    timings: dict[str, float] = {}
+
+    t0 = time.monotonic()
     try:
         asserts = z3.parse_smt2_file(src_path)
     except z3.Z3Exception as e:
@@ -352,31 +358,38 @@ def build_plan(
     goal = z3.Goal()
     for a in asserts:
         goal.add(a)
-    # parse_smt2_file returns an AstVector tied to the main context; drop it
-    # now that its contents are inside `goal`.
     del asserts
+    timings['parse'] = time.monotonic() - t0
+    if log: log(f"parse: {timings['parse']*1000:.0f}ms ({goal.size()} asserts)")
 
     tactic = _simplify_tactic(z3, probe_timeout)
-
-    # Cache probe objects — each `z3.Probe(name)` call allocates a native ref.
     probes = {
         'num-exprs': z3.Probe('num-exprs'),
         'arith-max-deg': z3.Probe('arith-max-deg'),
         'is-qflia': z3.Probe('is-qflia'),
     }
 
+    t0 = time.monotonic()
     current_goal = goal
     base_metrics = _apply_measure(z3, current_goal, tactic, probes)
+    timings['base-simplify'] = time.monotonic() - t0
+    if log: log(f"base-simplify: {timings['base-simplify']*1000:.0f}ms "
+                f"(exprs={base_metrics.num_exprs} ites={base_metrics.num_ites} "
+                f"deg={base_metrics.arith_max_deg})")
 
     plan_cands: list[Candidate] = []
     picked_names: set[str] = set()
     max_splits = _ceil_log2(max_leaves)
 
-    for _ in range(max_splits):
+    greedy_t0 = time.monotonic()
+    for it in range(max_splits):
+        t_iter = time.monotonic()
         names = [n for n in _enumerate_candidates(z3, current_goal, name_pattern)
                  if n not in picked_names]
         if not names:
+            if log: log(f"iter {it+1}: no candidates, stopping")
             break
+        if log: log(f"iter {it+1}: scoring {len(names)} candidates ...")
 
         scored: list[tuple[str, float, str | None, dict[str, float], bool | None]] = []
         # tuple: (name, score, reduces_on, probe_ms, harder_valuation)
@@ -418,6 +431,8 @@ def build_plan(
         best_name, best_score, best_reduces, best_ms, best_harder = scored[0]
 
         if best_score < threshold:
+            if log: log(f"iter {it+1}: best score {best_score:.1f} < threshold "
+                        f"{threshold}, stopping")
             break
 
         plan_cands.append(Candidate(
@@ -427,6 +442,16 @@ def build_plan(
             probe_ms=best_ms,
         ))
         picked_names.add(best_name)
+
+        if log:
+            rtf = (f", reduces→false on {best_reduces}"
+                   if best_reduces else "")
+            log(f"iter {it+1}: picked {best_name} (score {best_score:.1f}{rtf}) "
+                f"in {(time.monotonic()-t_iter)*1000:.0f}ms")
+
+        # Drop scoring bookkeeping for this iteration.
+        del scored
+        gc.collect()
 
         if best_harder is None:
             break
@@ -438,9 +463,12 @@ def build_plan(
         next_goal.add(z3.Bool(best_name) if best_harder else z3.Not(z3.Bool(best_name)))
         current_goal = next_goal
         base_metrics = _apply_measure(z3, current_goal, tactic, probes)
+    timings['greedy'] = time.monotonic() - greedy_t0
 
     # --- Build leaf manifest (2^k valuations over the chosen plan) ---
-    leaves = _build_leaf_specs(z3, goal, plan_cands, tactic)
+    t0 = time.monotonic()
+    leaves = _build_leaf_specs(z3, goal, plan_cands, tactic, log=log)
+    timings['leaves'] = time.monotonic() - t0
 
     plan = Plan(
         source=Path(src_path).name,
@@ -449,24 +477,55 @@ def build_plan(
         leaves=leaves,
     )
 
+    if log:
+        total_ms = sum(timings.values()) * 1000
+        parts = "  ".join(f"{k}={v*1000:.0f}ms" for k, v in timings.items())
+        log(f"done: total={total_ms:.0f}ms  ({parts})")
+
     # Explicitly release z3 native refs before z3's atexit handler fires.
     # Without this, stale refs in local frames can trigger "Uncollected memory"
-    # warnings from z3 on shutdown.
+    # warnings from z3 on shutdown (esp. in debug builds with
+    # Z3_DEBUG_REF_COUNTER). Multi-pass gc catches cycles involving Python
+    # wrappers around native objects.
     del current_goal
     del goal
     del tactic
     del probes
-    gc.collect()
+    del base_metrics
+    for _ in range(3):
+        gc.collect()
 
     return plan
 
 
-def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic) -> list[LeafSpec]:
-    """For each valuation tuple, detect pruning. Emit LeafSpec list."""
+def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic,
+                      *, log=None) -> list[LeafSpec]:
+    """For each valuation tuple, detect pruning. Emit LeafSpec list.
+
+    Optimization: if a picked predicate P is known to reduce the goal to
+    false when P=v0, then every valuation with P=v0 is trivially pruned
+    without running the tactic. This typically eliminates the vast
+    majority of tactic applies — on Certora VCs, 4 of 5 predicates tend
+    to have collapsing sides."""
     k = len(plan_cands)
     specs: list[LeafSpec] = []
     if k == 0:
         return specs
+
+    # Precompute each predicate's "collapse valuation" (the valuation that
+    # simplifies to false for *this* predicate in isolation). A leaf's
+    # valuation matching any such condition is doomed.
+    collapse_on: list[bool | None] = []
+    for cand in plan_cands:
+        if cand.reduces_to_false_on == 'true':
+            collapse_on.append(True)
+        elif cand.reduces_to_false_on == 'false':
+            collapse_on.append(False)
+        else:
+            collapse_on.append(None)
+
+    tactic_calls = 0
+    skipped = 0
 
     for bits in range(1 << k):
         valuation: dict[str, bool] = {}
@@ -477,13 +536,30 @@ def _build_leaf_specs(z3, original_goal, plan_cands: list[Candidate], tactic) ->
             label_parts.append('T' if v else 'F')
         label = '_'.join(label_parts)
 
-        pruned = _is_pruned(z3, original_goal, valuation, tactic)
+        # Fast path: any predicate known to collapse on `v` dooms this leaf.
+        pruned = False
+        for i, c_on in enumerate(collapse_on):
+            if c_on is not None and label_parts[i] == ('T' if c_on else 'F'):
+                pruned = True
+                skipped += 1
+                break
+
+        if not pruned:
+            pruned = _is_pruned(z3, original_goal, valuation, tactic)
+            tactic_calls += 1
+            if tactic_calls % 8 == 0:
+                gc.collect()
+
         specs.append(LeafSpec(
             valuation=valuation,
             file=None if pruned else f"leaf_{label}.smt2",
             pruned=pruned,
             reason="reduces to false" if pruned else None,
         ))
+
+    if log:
+        log(f"leaves: {1 << k} enumerated; {skipped} pruned by "
+            f"predicate-collapse fast-path, {tactic_calls} tactic checks ran")
 
     return specs
 

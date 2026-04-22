@@ -40,6 +40,8 @@ def register(subparsers):
                    default=None,
                    help='Output format for the summary (default: rich for TTY)')
     p.add_argument('--no-color', action='store_true', help='Disable color')
+    p.add_argument('--quiet', '-q', action='store_true',
+                   help='Suppress per-phase progress messages on stderr')
     p.set_defaults(func=run)
 
 
@@ -67,6 +69,9 @@ def run(args):
     # Lazy import — we only need z3 here, not at CLI registration time.
     from lemur import split as split_mod
 
+    def _log(msg: str) -> None:
+        print(f"[split] {msg}", file=sys.stderr, flush=True)
+
     try:
         plan = split_mod.build_plan(
             str(bench),
@@ -74,6 +79,7 @@ def run(args):
             threshold=args.split_score_threshold,
             probe_timeout=args.split_probe_timeout,
             name_pattern=args.split_name_pattern,
+            log=None if args.quiet else _log,
         )
     except split_mod.SplitError as e:
         print(f"Error: {e}", file=sys.stderr)
