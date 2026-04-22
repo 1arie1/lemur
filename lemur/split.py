@@ -457,11 +457,16 @@ def build_plan(
             break
 
         # Step context: assume the harder branch, re-measure base.
+        # Use a fresh local name and `del` it right after reassigning
+        # `current_goal` so the local frame only carries one reference to
+        # the new Goal; otherwise `next_goal` survives the loop and
+        # shows up as a leaked Z3_goal_ref at shutdown.
         next_goal = z3.Goal()
         for i in range(current_goal.size()):
             next_goal.add(current_goal[i])
         next_goal.add(z3.Bool(best_name) if best_harder else z3.Not(z3.Bool(best_name)))
         current_goal = next_goal
+        del next_goal
         base_metrics = _apply_measure(z3, current_goal, tactic, probes)
     timings['greedy'] = time.monotonic() - greedy_t0
 
