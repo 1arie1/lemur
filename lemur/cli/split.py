@@ -32,6 +32,11 @@ def register(subparsers):
     p.add_argument('--split-name-pattern', default=r'BLK__\d+', metavar='REGEX',
                    help='Regex identifying reachability Bool candidates '
                         '(default: BLK__\\d+)')
+    p.add_argument('--split-only', default=None, metavar='REGEX',
+                   help='Hard allowlist: restrict split candidates (both '
+                        'reachability and ITE guards) to names matching this '
+                        'regex. Use to force a split on a specific predicate, '
+                        'e.g. \'^BLK__49_1_0_0_0_0$\'.')
     p.add_argument('--plan-only', action='store_true',
                    help='Write plan.json only; no leaf .smt2 files on disk')
     p.add_argument('--force', action='store_true',
@@ -79,6 +84,7 @@ def run(args):
             threshold=args.split_score_threshold,
             probe_timeout=args.split_probe_timeout,
             name_pattern=args.split_name_pattern,
+            restrict_pattern=args.split_only,
             log=None if args.quiet else _log,
         )
     except split_mod.SplitError as e:

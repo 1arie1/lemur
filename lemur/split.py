@@ -218,15 +218,55 @@ def _collect_ite_guards(z3, exprs):
     return names
 
 
-def _enumerate_candidates(z3, goal, name_pattern: str) -> list[str]:
-    """Return an ordered list of Bool candidate names."""
+def _collect_fixed_bools(z3, goal) -> dict[str, bool]:
+    """Return {name: value} for Bool constants pinned by a top-level unit
+    assertion. Matches exactly `(assert B)` → True and `(assert (not B))` →
+    False. Guards against re-splitting files that `lemur split` has already
+    cut: the injected `(assert B)` / `(assert (not B))` lines would otherwise
+    make B look like a high-scoring split (one branch collapses trivially)
+    when in fact half the leaves would be redundant and the other half pruned.
+    """
+    fixed: dict[str, bool] = {}
+    for i in range(goal.size()):
+        e = goal[i]
+        if (z3.is_const(e)
+                and e.sort().kind() == z3.Z3_BOOL_SORT
+                and not z3.is_true(e) and not z3.is_false(e)):
+            fixed[e.decl().name()] = True
+        elif z3.is_not(e):
+            inner = e.arg(0)
+            if (z3.is_const(inner)
+                    and inner.sort().kind() == z3.Z3_BOOL_SORT
+                    and not z3.is_true(inner) and not z3.is_false(inner)):
+                fixed[inner.decl().name()] = False
+    return fixed
+
+
+def _enumerate_candidates(z3, goal, name_pattern: str,
+                          restrict_pattern: str | None = None) -> list[str]:
+    """Return an ordered list of Bool candidate names.
+
+    `name_pattern` classifies reachability-style names so they sort ahead of
+    ITE guards. `restrict_pattern`, if set, is a hard allowlist: every
+    candidate (reachability or guard) must match it.
+    """
     asserts = [goal[i] for i in range(goal.size())]
     bool_consts = _collect_bool_consts(z3, asserts)
     ite_guards = _collect_ite_guards(z3, asserts)
+    fixed = _collect_fixed_bools(z3, goal)
 
     pat = re.compile(name_pattern)
-    reachability = [n for n in bool_consts if pat.search(n)]
-    guards = [n for n in ite_guards if n not in reachability]
+    restrict = re.compile(restrict_pattern) if restrict_pattern else None
+
+    def _keep(n: str) -> bool:
+        if n in fixed:
+            return False
+        if restrict is not None and not restrict.search(n):
+            return False
+        return True
+
+    reachability = [n for n in bool_consts if pat.search(n) and _keep(n)]
+    guards = [n for n in ite_guards if n not in reachability and _keep(n)]
 
     # Deterministic ordering: reachability first (sorted), then guards.
     return sorted(reachability) + sorted(guards)
@@ -340,13 +380,23 @@ def build_plan(
     threshold: float = 10.0,
     probe_timeout: float = 5.0,
     name_pattern: str = r'BLK__\d+',
+    restrict_pattern: str | None = None,
     log=None,
 ) -> Plan:
     """Parse `src_path`, enumerate candidates, score + greedy plan.
 
     `log(msg)` if provided is called with short progress messages; use
-    `print` with `file=sys.stderr` to surface them to the user."""
+    `print` with `file=sys.stderr` to surface them to the user.
+
+    `restrict_pattern`, if set, is a hard allowlist regex applied to every
+    candidate name (reachability and ITE guards alike), on top of
+    `name_pattern`. Use it to force a split on a specific predicate."""
     z3 = _import_z3()
+    try:
+        if restrict_pattern is not None:
+            re.compile(restrict_pattern)
+    except re.error as e:
+        raise SplitError(f"invalid --split-only regex {restrict_pattern!r}: {e}") from e
     timings: dict[str, float] = {}
 
     t0 = time.monotonic()
@@ -384,7 +434,8 @@ def build_plan(
     greedy_t0 = time.monotonic()
     for it in range(max_splits):
         t_iter = time.monotonic()
-        names = [n for n in _enumerate_candidates(z3, current_goal, name_pattern)
+        names = [n for n in _enumerate_candidates(
+                    z3, current_goal, name_pattern, restrict_pattern)
                  if n not in picked_names]
         if not names:
             if log: log(f"iter {it+1}: no candidates, stopping")
