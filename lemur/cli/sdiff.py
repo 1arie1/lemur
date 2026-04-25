@@ -31,7 +31,14 @@ def register(subparsers):
     p.add_argument('a', help='First SMT2 file (A)')
     p.add_argument('b', help='Second SMT2 file (B)')
     p.add_argument('--apply', metavar='TACTIC', default=None,
-                   help='Apply the same tactic to both files before diffing.')
+                   help='Apply the same tactic to both files before diffing. '
+                        'Mutually exclusive with --apply-a / --apply-b.')
+    p.add_argument('--apply-a', metavar='TACTIC', default=None,
+                   help='Apply this tactic only to file A (asymmetric mode). '
+                        'Use together with --apply-b to compare two '
+                        'preprocessing pipelines on the same source.')
+    p.add_argument('--apply-b', metavar='TACTIC', default=None,
+                   help='Apply this tactic only to file B (asymmetric mode).')
     p.add_argument('--pattern', metavar='PATTERN', default=None,
                    help='Restrict diff to a single sgrep-style pattern.')
     p.add_argument('--show-same', action='store_true',
@@ -62,12 +69,21 @@ def run(args):
             print(f"Error: file not found: {p}", file=sys.stderr)
             sys.exit(1)
 
+    if args.apply is not None and (args.apply_a is not None
+                                   or args.apply_b is not None):
+        print("Error: --apply is mutually exclusive with --apply-a / "
+              "--apply-b.", file=sys.stderr)
+        sys.exit(2)
+
+    apply_a = args.apply_a if args.apply_a is not None else args.apply
+    apply_b = args.apply_b if args.apply_b is not None else args.apply
+
     z3 = sgrep._import_z3()
     sgrep.set_pp_aliases(z3, args.expand_aliases)
 
     try:
-        g_a = _load_goal(z3, sgrep, a_path, args.apply)
-        g_b = _load_goal(z3, sgrep, b_path, args.apply)
+        g_a = _load_goal(z3, sgrep, a_path, apply_a)
+        g_b = _load_goal(z3, sgrep, b_path, apply_b)
     except sgrep.TacticParseError as e:
         print(f"Error: --apply: {e}", file=sys.stderr)
         sys.exit(2)

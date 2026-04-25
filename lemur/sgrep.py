@@ -39,7 +39,7 @@ def _import_z3():
 # --- Pattern AST -------------------------------------------------------------
 
 
-_TYPE_FILTERS = ('Bool', 'Numeral', 'Var', 'Expr')
+_TYPE_FILTERS = ('Bool', 'Numeral', 'Var', 'Expr', 'Eq', 'Comparison')
 
 
 @dataclass
@@ -237,6 +237,11 @@ def _check_type(z3, e, tf: str | None) -> bool:
     if tf == 'Var':
         return (z3.is_app(e) and e.decl().arity() == 0
                 and e.decl().kind() == z3.Z3_OP_UNINTERPRETED)
+    if tf == 'Eq':
+        return z3.is_app(e) and e.decl().kind() == z3.Z3_OP_EQ
+    if tf == 'Comparison':
+        return (z3.is_app(e) and e.decl().kind() in (
+            z3.Z3_OP_LT, z3.Z3_OP_LE, z3.Z3_OP_GT, z3.Z3_OP_GE))
     raise AssertionError(f"unknown type filter: {tf!r}")
 
 

@@ -191,7 +191,9 @@ lemur sgrep FILE.smt2 [PATTERN] [--apply TACTIC]
     (head c1 c2 ...)     compound: head op-name + arity-matched children
     NAME                 bare literal: matches a 0-arity expr with that
                          decl name (e.g. POW2_64).
-    type filters: ?c:Bool  ?k:Numeral  ?n:Var  ?e:Expr (default).
+    type filters: ?c:Bool  ?k:Numeral  ?n:Var  ?e:Expr (default)
+                  ?c:Eq  (matches `(= a b)`)
+                  ?c:Comparison  (matches `<`, `<=`, `>`, `>=`)
     negation: !?n:Numeral  ≡  ?n:!Numeral  (XOR if both forms used).
 
   flags:
@@ -221,6 +223,14 @@ lemur sdiff A.smt2 B.smt2 [--apply TACTIC] [--pattern PATTERN]
   flags:
     --apply 'TACTIC'      apply same tactic to both before diffing
                           (e.g. compare baseline-pv_se vs experimental).
+    --apply-a 'TACTIC'    asymmetric mode: apply this tactic only to A.
+    --apply-b 'TACTIC'    asymmetric mode: apply this tactic only to B.
+                          Use both together to compare two preprocessing
+                          pipelines against the *same* source file:
+                            lemur sdiff F.smt2 F.smt2 \\
+                              --apply-a 'simplify' \\
+                              --apply-b '(then simplify propagate-values)'
+                          --apply is mutually exclusive with --apply-a/-b.
     --show-same           include rows where A == B (default: hide).
     --format plain|json   json emits {a, b, rows: [{shape, a, b, delta}]}.
     --expand-aliases      same as sgrep.
