@@ -1,5 +1,6 @@
 """lemur sgrep: structural search over an SMT2 file's AST."""
 
+import gc
 import json
 import sys
 from pathlib import Path
@@ -32,8 +33,12 @@ def register(subparsers):
     p.add_argument('--apply', metavar='TACTIC', default=None,
                    help='Apply z3 tactic before searching. Accepts a single '
                         'tactic name or a `(then t1 t2 ...)` chain.')
-    p.add_argument('--show', choices=['captures'], default=None,
-                   help='Per-match extras: `captures` prints capture bindings.')
+    p.add_argument('--show', choices=['captures', 'kind'], default=None,
+                   help='Per-match extras: `captures` prints full capture '
+                        'bindings; `kind` prints a one-line classification '
+                        '(Var(name) / Numeral(N) / op-head) per capture — '
+                        'use this when --distinct over compound guards '
+                        'would otherwise dump huge subtrees.')
     p.add_argument('--format', '-f', choices=['plain', 'json'],
                    default='plain', help='Output format (default: plain).')
     p.add_argument('--expand-aliases', action='store_true',
@@ -67,6 +72,7 @@ def run(args):
         print(f"Error: parse failed: {e}", file=sys.stderr)
         sys.exit(1)
 
+    tac = None
     if args.apply:
         try:
             tac = sgrep.parse_tactic(z3, args.apply)
@@ -74,6 +80,19 @@ def run(args):
             print(f"Error: --apply: {e}", file=sys.stderr)
             sys.exit(2)
         goal = sgrep.apply_tactic_to_goal(z3, goal, tac)
+
+    try:
+        _do_run(z3, sgrep, goal, args)
+    finally:
+        # Drop z3 native refs so the atexit handler doesn't surface them as
+        # 'Uncollected memory' warnings on debug builds.
+        del goal
+        del tac
+        for _ in range(2):
+            gc.collect()
+
+
+def _do_run(z3, sgrep, goal, args) -> None:
 
     mode = _eff_mode(args)
 
@@ -122,13 +141,32 @@ def run(args):
 
     if args.format == 'json':
         for m in matches:
-            obj = {"expr": str(m.expr)}
-            if m.captures:
-                obj["captures"] = {k: str(v) for k, v in m.captures.items()}
+            if args.show == 'kind':
+                obj = {"kind": sgrep.describe_kind(z3, m.expr)}
+                if m.captures:
+                    obj["captures"] = {k: sgrep.describe_kind(z3, v)
+                                       for k, v in m.captures.items()}
+            else:
+                obj = {"expr": str(m.expr)}
+                if m.captures and args.show == 'captures':
+                    obj["captures"] = {k: str(v)
+                                       for k, v in m.captures.items()}
             print(json.dumps(obj))
         return
 
     for m in matches:
+        if args.show == 'kind':
+            # Suppress full expr — that's the whole point of --show kind:
+            # consumable output when match.expr or captures are large
+            # subtrees. Print kind-of-match + kind-of-each-capture.
+            head = sgrep.describe_kind(z3, m.expr)
+            if m.captures:
+                caps = '  '.join(f'?{k}={sgrep.describe_kind(z3, v)}'
+                                 for k, v in m.captures.items())
+                print(f'{head}  [{caps}]')
+            else:
+                print(head)
+            continue
         line = str(m.expr)
         if args.show == 'captures' and m.captures:
             caps = '  '.join(f'?{k}={v}' for k, v in m.captures.items())

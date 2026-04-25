@@ -197,7 +197,12 @@ lemur sgrep FILE.smt2 [PATTERN] [--apply TACTIC]
   flags:
     --apply 'TACTIC'      pre-process via z3 tactic. Grammar (v1):
                           a single tactic name OR (then t1 t2 ...).
-    --show captures       per-match: list ?name=binding pairs.
+    --show captures       per-match: append `?name=full-binding` pairs.
+    --show kind           per-match: replace expr with one-line kind
+                          summary (Var(name) / Numeral(N) / Op(head))
+                          for the match and each capture. Use this
+                          when --distinct on compound guards would
+                          otherwise dump huge subtrees.
     --format plain|json   json emits one match per line (or {count: N}
                           for --count; structured object for --summary).
     --expand-aliases      inline z3 let-aliases in printed output. Beware

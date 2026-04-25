@@ -61,7 +61,16 @@ class PCompound:
     children: list  # list[PNode]
 
 
-PNode = PWild | PCapture | PCompound
+@dataclass
+class PNumeral:
+    """Match a numeric literal by value. z3 IntVal/BV-value/rational
+    decl names are sort names ('Int', 'bv', 'Real') rather than the
+    value itself, so a bare numeric token in the pattern can't be
+    handled as a 0-arity PCompound — needs a value-comparison match."""
+    value: int
+
+
+PNode = PWild | PCapture | PCompound | PNumeral
 
 
 # --- Pattern parser ----------------------------------------------------------
@@ -128,7 +137,17 @@ def _parse_atom(tok: str) -> PNode:
         raise PatternError(f"`!` only applies to wildcards/captures: {tok!r}")
     if ':' in s:
         raise PatternError(f"type filter `:` not allowed on literal name: {tok!r}")
+    if _is_int_token(s):
+        return PNumeral(value=int(s))
     return PCompound(head=s, children=[])
+
+
+def _is_int_token(s: str) -> bool:
+    if not s:
+        return False
+    if s[0] == '-':
+        return len(s) > 1 and s[1:].isdigit()
+    return s.isdigit()
 
 
 def _split_type_part(body: str, orig_tok: str) -> tuple[str, str | None, bool]:
@@ -253,6 +272,16 @@ def match(z3, p: PNode, e, env: dict[str, object]) -> bool:
             if not match(z3, sub_p, e.arg(j), env):
                 return False
         return True
+    if isinstance(p, PNumeral):
+        if z3.is_int_value(e) or z3.is_bv_value(e):
+            return e.as_long() == p.value
+        if z3.is_rational_value(e):
+            try:
+                return (e.denominator_as_long() == 1
+                        and e.numerator_as_long() == p.value)
+            except Exception:
+                return False
+        return False
     raise AssertionError(f"unknown pattern node: {p!r}")
 
 
@@ -344,24 +373,57 @@ def parse_smt2_to_goal(z3, src_path: str):
 def apply_tactic_to_goal(z3, goal, tactic):
     """Apply a tactic, return a single Goal. Multi-subgoal output collapses
     to the first subgoal with a warning printed to stderr (matches the
-    `_presimplify` policy)."""
+    `_presimplify` policy).
+
+    The intermediate ApplyResult holds native z3 refs and would otherwise
+    survive in a local frame until process exit, surfacing as
+    'Uncollected memory' warnings on debug builds. Drop it explicitly."""
     import sys
     r = tactic.apply(goal)
-    n = len(r)
-    if n == 0:
-        return z3.Goal()
-    if n > 1:
-        print(f"[sgrep] warning: tactic produced {n} subgoals; using "
-              f"subgoal[0]", file=sys.stderr)
-    sg = r[0]
-    g = z3.Goal()
-    for j in range(sg.size()):
-        g.add(sg[j])
-    return g
+    try:
+        n = len(r)
+        if n == 0:
+            return z3.Goal()
+        if n > 1:
+            print(f"[sgrep] warning: tactic produced {n} subgoals; using "
+                  f"subgoal[0]", file=sys.stderr)
+        sg = r[0]
+        g = z3.Goal()
+        for j in range(sg.size()):
+            g.add(sg[j])
+        return g
+    finally:
+        del r
 
 
 def goal_top_level_exprs(goal) -> list:
     return [goal[i] for i in range(goal.size())]
+
+
+def describe_kind(z3, e) -> str:
+    """One-line classification of a z3 expression for `--show kind`.
+    Goal is a *summary* of compound captures so `--distinct` over deeply
+    nested guards stays consumable: full subtree printing was the W2
+    pain point in the v2 feedback. For atomic forms the description
+    embeds the value or name; for compounds we just emit the head op."""
+    if z3.is_int_value(e) or z3.is_bv_value(e):
+        return f"Numeral({e.as_long()})"
+    if z3.is_rational_value(e):
+        return f"Numeral({e})"
+    if z3.is_app(e):
+        d = e.decl()
+        if d.arity() == 0:
+            kind = d.kind()
+            if kind == z3.Z3_OP_UNINTERPRETED:
+                return f"Var({d.name()})"
+            if kind == z3.Z3_OP_TRUE:
+                return "True"
+            if kind == z3.Z3_OP_FALSE:
+                return "False"
+        # Wrap compound heads — bare `=` or `*` would collide with the
+        # `?c=KIND` display separator and read as `?c==` / `?c=*`.
+        return f"Op({d.name()})"
+    return type(e).__name__
 
 
 # --- Summary aggregator ------------------------------------------------------

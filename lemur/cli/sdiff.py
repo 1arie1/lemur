@@ -11,6 +11,7 @@ matching `lemur sgrep`. The tactic-string grammar is identical: a single
 tactic name, or `(then t1 t2 ...)`.
 """
 
+import gc
 import json
 import sys
 from pathlib import Path
@@ -93,14 +94,20 @@ def run(args):
     if not args.show_same:
         rows = [r for r in rows if r[1] != r[2]]
 
-    if args.format == 'json':
-        out = [{"shape": r[0], "a": r[1], "b": r[2], "delta": r[2] - r[1]}
-               for r in rows]
-        print(json.dumps({"a": str(a_path), "b": str(b_path),
-                          "rows": out}, indent=2))
-        return
-
-    _render_plain_table(rows, a_path, b_path)
+    try:
+        if args.format == 'json':
+            out = [{"shape": r[0], "a": r[1], "b": r[2], "delta": r[2] - r[1]}
+                   for r in rows]
+            print(json.dumps({"a": str(a_path), "b": str(b_path),
+                              "rows": out}, indent=2))
+            return
+        _render_plain_table(rows, a_path, b_path)
+    finally:
+        # Drop z3 native refs ahead of the atexit handler.
+        del g_a
+        del g_b
+        for _ in range(2):
+            gc.collect()
 
 
 def _summary_rows(sa, sb) -> list[tuple[str, int, int]]:
