@@ -37,6 +37,12 @@ def register(subparsers):
                         'reachability and ITE guards) to names matching this '
                         'regex. Use to force a split on a specific predicate, '
                         'e.g. \'^BLK__49_1_0_0_0_0$\'.')
+    p.add_argument('--weight-nla-ite-collapse', type=float, default=5.0,
+                   metavar='W',
+                   help='Score weight for the (div|mod|mul)-of-ITE shrinkage '
+                        'axis. NLA solvers pay extra per ITE-wrapped factor, '
+                        'so eliminating these terms is worth more than a '
+                        'generic ITE removal. 0 disables. Default: 5.')
     p.add_argument('--plan-only', action='store_true',
                    help='Write plan.json only; no leaf .smt2 files on disk')
     p.add_argument('--force', action='store_true',
@@ -85,6 +91,7 @@ def run(args):
             probe_timeout=args.split_probe_timeout,
             name_pattern=args.split_name_pattern,
             restrict_pattern=args.split_only,
+            nla_ite_weight=args.weight_nla_ite_collapse,
             log=None if args.quiet else _log,
         )
     except split_mod.SplitError as e:

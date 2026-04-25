@@ -96,16 +96,22 @@ class _Metrics:
     num_ites: int = 0
     num_divs: int = 0
     num_mods: int = 0
+    num_nla_ite_terms: int = 0   # (div|mod|*) with at least one ITE child
     arith_max_deg: int = 0
     is_qflia: bool = False
 
 
 def _walk_subgoal(z3, sg, seen: set, counters: list):
-    """DAG-walk a single subgoal, accumulating ITE/IDIV/MOD counts in counters.
+    """DAG-walk a single subgoal, accumulating structural counts in counters.
     `seen` and `counters` are mutated in place so callers can share them across
     subgoals without building giant intermediate expression lists.
 
-    counters = [num_ites, num_divs, num_mods]."""
+    counters = [num_ites, num_divs, num_mods, num_nla_ite_terms].
+
+    `num_nla_ite_terms` counts each term whose top-level op is div/mod/* AND
+    at least one immediate child is an ITE — these are the shapes NLA solvers
+    pay extra for (each ITE-wrapped factor becomes a fresh LP variable)."""
+    nla_ops = (z3.Z3_OP_IDIV, z3.Z3_OP_MOD, z3.Z3_OP_MUL)
     for i in range(sg.size()):
         stack = [sg[i]]
         while stack:
@@ -122,6 +128,12 @@ def _walk_subgoal(z3, sg, seen: set, counters: list):
                     counters[1] += 1
                 elif k == z3.Z3_OP_MOD:
                     counters[2] += 1
+                if k in nla_ops:
+                    for j in range(e.num_args()):
+                        ch = e.arg(j)
+                        if z3.is_app(ch) and ch.decl().kind() == z3.Z3_OP_ITE:
+                            counters[3] += 1
+                            break
                 for j in range(e.num_args()):
                     stack.append(e.arg(j))
 
@@ -133,7 +145,7 @@ def _measure_apply_result(z3, result, probes: dict) -> _Metrics:
     `z3.Probe(name)` allocates a native object)."""
     m = _Metrics()
     seen: set = set()
-    counters = [0, 0, 0]  # ites, divs, mods
+    counters = [0, 0, 0, 0]  # ites, divs, mods, nla_ite_terms
     n = len(result)
     for i in range(n):
         sg = result[i]
@@ -152,17 +164,18 @@ def _measure_apply_result(z3, result, probes: dict) -> _Metrics:
         except Exception:
             pass
         _walk_subgoal(z3, sg, seen, counters)
-    m.num_ites, m.num_divs, m.num_mods = counters
+    m.num_ites, m.num_divs, m.num_mods, m.num_nla_ite_terms = counters
     return m
 
 
-def _gain(base: _Metrics, leaf: _Metrics) -> float:
+def _gain(base: _Metrics, leaf: _Metrics, *, nla_ite_weight: float = 5.0) -> float:
     return (
         0.1 * (base.num_exprs - leaf.num_exprs)
         + 5.0 * (base.num_ites - leaf.num_ites)
         + 3.0 * (base.arith_max_deg - leaf.arith_max_deg)
         + 2.0 * (base.num_divs - leaf.num_divs)
         + 2.0 * (base.num_mods - leaf.num_mods)
+        + nla_ite_weight * (base.num_nla_ite_terms - leaf.num_nla_ite_terms)
         + (50.0 if leaf.is_qflia and not base.is_qflia else 0.0)
     )
 
@@ -288,7 +301,8 @@ def _simplify_tactic(z3, timeout_s: float):
 
 
 def _score_with_assumption(z3, goal, name: str, value: bool, tactic,
-                           base_metrics: _Metrics, probes: dict):
+                           base_metrics: _Metrics, probes: dict,
+                           *, nla_ite_weight: float = 5.0):
     """Clone `goal`, add `C=value`, apply `tactic`, compute the gain score.
 
     Returns (gain: float, collapsed: bool, elapsed_ms: float). The
@@ -314,7 +328,7 @@ def _score_with_assumption(z3, goal, name: str, value: bool, tactic,
         # Explicit release — these hold native z3 refs we don't need anymore.
         del r
         del g2
-    return _gain(base_metrics, leaf_metrics), False, elapsed_ms
+    return _gain(base_metrics, leaf_metrics, nla_ite_weight=nla_ite_weight), False, elapsed_ms
 
 
 def _apply_measure(z3, goal, tactic, probes: dict) -> _Metrics:
@@ -428,6 +442,7 @@ def build_plan(
     probe_timeout: float = 5.0,
     name_pattern: str = r'BLK__\d+',
     restrict_pattern: str | None = None,
+    nla_ite_weight: float = 5.0,
     log=None,
 ) -> Plan:
     """Parse `src_path`, enumerate candidates, score + greedy plan.
@@ -437,7 +452,10 @@ def build_plan(
 
     `restrict_pattern`, if set, is a hard allowlist regex applied to every
     candidate name (reachability and ITE guards alike), on top of
-    `name_pattern`. Use it to force a split on a specific predicate."""
+    `name_pattern`. Use it to force a split on a specific predicate.
+
+    `nla_ite_weight` is the score weight for the (div|mod|mul)-of-ITE
+    shrinkage axis. Set to 0 to disable that axis."""
     z3 = _import_z3()
     try:
         if restrict_pattern is not None:
@@ -516,9 +534,11 @@ def build_plan(
 
         for n in names:
             gain_t, c_t, ms_t = _score_with_assumption(
-                z3, current_goal, n, True, tactic, base_metrics, probes)
+                z3, current_goal, n, True, tactic, base_metrics, probes,
+                nla_ite_weight=nla_ite_weight)
             gain_f, c_f, ms_f = _score_with_assumption(
-                z3, current_goal, n, False, tactic, base_metrics, probes)
+                z3, current_goal, n, False, tactic, base_metrics, probes,
+                nla_ite_weight=nla_ite_weight)
 
             if c_t and c_f:
                 # Both branches contradictory — the conjunction so far is
