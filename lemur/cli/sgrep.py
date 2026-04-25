@@ -1,5 +1,6 @@
 """lemur sgrep: structural search over an SMT2 file's AST."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -28,6 +29,8 @@ def register(subparsers):
                         'tactic name or a `(then t1 t2 ...)` chain.')
     p.add_argument('--show', choices=['captures'], default=None,
                    help='Per-match extras: `captures` prints capture bindings.')
+    p.add_argument('--format', '-f', choices=['plain', 'json'],
+                   default='plain', help='Output format (default: plain).')
     p.add_argument('--expand-aliases', action='store_true',
                    help='Inline let-aliases in printed expressions. Beware: '
                         'deeply-shared subterms can blow up exponentially.')
@@ -75,7 +78,10 @@ def run(args):
                   "drop one.", file=sys.stderr)
             sys.exit(2)
         s = sgrep.compute_summary(z3, goal)
-        _render_summary(s)
+        if args.format == 'json':
+            print(json.dumps(_summary_to_jsonable(s), indent=2))
+        else:
+            _render_summary(s)
         return
 
     if args.pattern is None:
@@ -92,7 +98,10 @@ def run(args):
     matches = sgrep.find_matches(z3, p, sgrep.goal_top_level_exprs(goal))
 
     if mode == 'count':
-        print(len(matches))
+        if args.format == 'json':
+            print(json.dumps({"count": len(matches)}))
+        else:
+            print(len(matches))
         return
 
     if mode == 'distinct':
@@ -106,12 +115,30 @@ def run(args):
             unique.append(m)
         matches = unique
 
+    if args.format == 'json':
+        for m in matches:
+            obj = {"expr": str(m.expr)}
+            if m.captures:
+                obj["captures"] = {k: str(v) for k, v in m.captures.items()}
+            print(json.dumps(obj))
+        return
+
     for m in matches:
         line = str(m.expr)
         if args.show == 'captures' and m.captures:
             caps = '  '.join(f'?{k}={v}' for k, v in m.captures.items())
             line = f'{line}    [{caps}]'
         print(line)
+
+
+def _summary_to_jsonable(s) -> dict:
+    return {
+        "asserts": s.num_asserts,
+        "decls_by_sort": dict(s.decls_by_sort),
+        "top_ops": dict(s.top_ops),
+        "shape_counts": dict(s.shape_counts),
+        "max_depth": s.max_depth,
+    }
 
 
 def _render_summary(s) -> None:
