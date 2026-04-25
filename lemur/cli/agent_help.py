@@ -168,6 +168,58 @@ lemur split-status DIR
   -v   list every leaf with its path and state
   -f plain|rich|json    json emits the full tree for scripting
 """,
+    'sgrep': """\
+lemur sgrep FILE.smt2 [PATTERN] [--apply TACTIC]
+  why: grep is line-oriented and breaks on multi-line `(let …)` nesting;
+       `(div (ite c A B) k)` and `(ite c (div A k) (div B k))` look the
+       same to a regex but are different shapes. sgrep walks the z3 AST
+       (let-bindings already eliminated by the parser) and matches an
+       s-expression pattern with capture variables. Run preprocessing
+       first via --apply when you want to see what the solver sees.
+
+  modes (mutually exclusive; default depends on whether PATTERN is given):
+    --summary       file overview: asserts, decls-by-sort, top operators,
+                    distinct-shape counts for the standard div/mod/ite
+                    patterns, max nesting depth. default if no PATTERN.
+    --count         number of matches; exit.
+    --list          one match per line (default if PATTERN given).
+    --distinct      --list with structurally-equal duplicates removed.
+
+  pattern syntax:
+    _                    wildcard
+    ?name                capture (same name twice ⇒ id-equality unification)
+    (head c1 c2 ...)     compound: head op-name + arity-matched children
+    NAME                 bare literal: matches a 0-arity expr with that
+                         decl name (e.g. POW2_64).
+    type filters: ?c:Bool  ?k:Numeral  ?n:Var  ?e:Expr (default).
+    negation: !?n:Numeral  ≡  ?n:!Numeral  (XOR if both forms used).
+
+  flags:
+    --apply 'TACTIC'      pre-process via z3 tactic. Grammar (v1):
+                          a single tactic name OR (then t1 t2 ...).
+    --show captures       per-match: list ?name=binding pairs.
+    --format plain|json   json emits one match per line (or {count: N}
+                          for --count; structured object for --summary).
+    --expand-aliases      inline z3 let-aliases in printed output. Beware
+                          exponential blowup on deeply-shared subterms.
+""",
+    'sdiff': """\
+lemur sdiff A.smt2 B.smt2 [--apply TACTIC] [--pattern PATTERN]
+  why: structural diff between two SMT2 files. Same shape table as
+       `sgrep --summary`, run on both files, with A-count, B-count and
+       delta. Tells you "encoder Pattern-3 went from 39 occurrences to
+       0" without staring at unified diffs of mangled SMT2.
+
+  default mode: full shape table. --pattern PATTERN restricts to one
+  user-supplied sgrep-style pattern.
+
+  flags:
+    --apply 'TACTIC'      apply same tactic to both before diffing
+                          (e.g. compare baseline-pv_se vs experimental).
+    --show-same           include rows where A == B (default: hide).
+    --format plain|json   json emits {a, b, rows: [{shape, a, b, delta}]}.
+    --expand-aliases      same as sgrep.
+""",
 }
 
 
@@ -202,12 +254,20 @@ workflows:
   lemur nla ./out/default_s3.trace --strategy grob --list
   lemur nla ./out/default_s3.trace --top-by vars --top-n 5
   lemur search ./out/default_s3.trace 'calls' --fn '^check$' --entries -n
+
+# structural inspection of an unfamiliar VC, then compare two preprocessing
+# pipelines to see what actually changed at the AST level
+  lemur sgrep bench.smt2 --summary
+  lemur sgrep bench.smt2 --apply '(then simplify propagate-values solve-eqs)' \\
+    '(div (ite ?c _ _) _)' --distinct --show captures   # find guards
+  lemur sdiff before.smt2 after.smt2 \\
+    --apply '(then simplify propagate-values solve-eqs)'
 """
 
 
 def full() -> str:
     parts = [
-        "lemur: z3 trace analysis toolkit. eight subcommands.",
+        f"lemur: z3 trace + SMT2 analysis toolkit. {len(SECTIONS)} subcommands.",
         "",
         WHY,
         "",

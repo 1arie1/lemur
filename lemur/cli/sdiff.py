@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+from lemur.cli import agent_help
+
 
 def register(subparsers):
     p = subparsers.add_parser(
@@ -22,8 +24,9 @@ def register(subparsers):
         help='Structural diff between two SMT2 files.',
         epilog='With no --pattern, prints a shape-count table; with '
                '--pattern, prints A_count / B_count / delta for that one '
-               'pattern.',
+               'pattern. AI agents: use `lemur sdiff --agent`.',
     )
+    agent_help.add_agent_flag(p, 'sdiff')
     p.add_argument('a', help='First SMT2 file (A)')
     p.add_argument('b', help='Second SMT2 file (B)')
     p.add_argument('--apply', metavar='TACTIC', default=None,

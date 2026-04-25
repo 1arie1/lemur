@@ -4,14 +4,19 @@ import json
 import sys
 from pathlib import Path
 
+from lemur.cli import agent_help
+
 
 def register(subparsers):
     p = subparsers.add_parser(
         'sgrep',
         help='Structural search over SMT2 ASTs (s-expression patterns).',
-        epilog='Pattern syntax (v1): _ wildcard, ?name capture (same name '
-               'unifies by id-equality), (head c1 c2 ...) compound match.',
+        epilog='Pattern syntax: _ wildcard, ?name capture (same name unifies '
+               'by id-equality), (head c1 c2 ...) compound match, NAME '
+               'literal, type filters ?x:Bool|Numeral|Var|Expr, negation '
+               '!?x:T or ?x:!T. AI agents: use `lemur sgrep --agent`.',
     )
+    agent_help.add_agent_flag(p, 'sgrep')
     p.add_argument('file', help='SMT2 input file')
     p.add_argument('pattern', nargs='?', default=None,
                    help='Pattern. Omit to get --summary.')
