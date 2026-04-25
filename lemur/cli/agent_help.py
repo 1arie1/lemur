@@ -170,70 +170,197 @@ lemur split-status DIR
 """,
     'sgrep': """\
 lemur sgrep FILE.smt2 [PATTERN] [--apply TACTIC]
-  why: grep is line-oriented and breaks on multi-line `(let …)` nesting;
-       `(div (ite c A B) k)` and `(ite c (div A k) (div B k))` look the
-       same to a regex but are different shapes. sgrep walks the z3 AST
-       (let-bindings already eliminated by the parser) and matches an
-       s-expression pattern with capture variables. Run preprocessing
-       first via --apply when you want to see what the solver sees.
+  why: grep is line-oriented; SMT2 has multi-line `(let …)` nesting and
+       shape variants like `(div (ite c A B) k)` vs `(ite c (div A k)
+       (div B k))` that read identically to a regex. sgrep walks the
+       post-parser z3 AST (sharing-aware; the printer may still elide
+       deeply-shared subtrees with `...` — use --expand-aliases to
+       inline). Run preprocessing first via --apply to see what the
+       solver actually sees.
 
-  modes (mutually exclusive; default depends on whether PATTERN is given):
-    --summary       file overview: asserts, decls-by-sort, top operators,
-                    distinct-shape counts for the standard div/mod/ite
-                    patterns, max nesting depth. default if no PATTERN.
+  decide:
+    no PATTERN given        → --summary (file overview)
+    just want a number      → --count
+    classifying many guards → --distinct --show kind
+    extracting capture vals → --distinct --show captures
+    scripting downstream    → --format json
+    iterating on patterns   → --check-pattern (validates without running)
+
+  modes (mutually exclusive; default: summary if no PATTERN, list otherwise):
+    --summary       file overview: asserts, decls-by-sort, top operators
+                    (filtered to arity > 0), distinct-shape counts (see
+                    "summary shape counts" below), max nesting depth.
     --count         number of matches; exit.
-    --list          one match per line (default if PATTERN given).
-    --distinct      --list with structurally-equal duplicates removed.
+    --list          one match per line.
+    --distinct      --list with structurally-equal duplicates removed
+                    (deduped by str(match.expr) — exact AST identity).
 
-  pattern syntax:
+  pattern syntax (note: pattern uses SMT-LIB head names — `ite`, `=`,
+  `+`, `*`, `div`, `mod`; --show kind output uses z3-printer names —
+  `Op(if)`, `Op(=)`):
+
     _                    wildcard
     ?name                capture (same name twice ⇒ id-equality unification)
     (head c1 c2 ...)     compound: head op-name + arity-matched children
-    NAME                 bare literal: matches a 0-arity expr with that
-                         decl name (e.g. POW2_64).
-    type filters: ?c:Bool  ?k:Numeral  ?n:Var  ?e:Expr (default)
-                  ?c:Eq  (matches `(= a b)`)
-                  ?c:Comparison  (matches `<`, `<=`, `>`, `>=`)
-    negation: !?n:Numeral  ≡  ?n:!Numeral  (XOR if both forms used).
+    NAME                 bare literal name: matches a 0-arity expr with
+                         that decl name. ⚠ define-fun macros (e.g.
+                         `(define-fun POW2_64 () Int 18446744073709551616)`)
+                         are inlined at parse time, so `(mod _ POW2_64)`
+                         matches NOTHING in such files. To match the
+                         underlying value, use the literal directly:
+                         `(mod _ 18446744073709551616)`. NAME works for
+                         names introduced by `declare-const` /
+                         `declare-fun`, which survive parsing.
+    NUMERAL              integer literal; matches by value against
+                         IntVal / BV-value / rational-value AST nodes.
+
+    type filters (independent dimensions; not mutually exclusive — an
+    atomic Bool free constant matches BOTH :Bool AND :Var):
+      ?c:Bool         expr with Bool sort (atomic OR compound Bool)
+      ?n:Var          0-arity uninterpreted constant (free variable)
+      ?k:Numeral      integer / bit-vector / rational literal
+      ?c:Eq           top-op `=`  (Z3_OP_EQ)
+      ?c:Comparison   top-op `<` / `<=` / `>` / `>=`
+      ?e:Expr         no filter (default; explicit form)
+    negation: !?n:Numeral  ≡  ?n:!Numeral  (XOR — both forms together cancel)
+
+  summary shape counts (always reported by --summary):
+    (div ?a ?b)              (mod ?a ?b)            (ite ?c ?a ?b)
+    (div (ite ?c ?a ?b) ?k)  (mod (ite ?c ?a ?b) ?k)
+    (* ?x (ite ?c ?a ?b))    (* (ite ?c ?a ?b) ?x)
 
   flags:
     --apply 'TACTIC'      pre-process via z3 tactic. Grammar (v1):
-                          a single tactic name OR (then t1 t2 ...).
-    --show captures       per-match: append `?name=full-binding` pairs.
-    --show kind           per-match: replace expr with one-line kind
-                          summary (Var(name) / Numeral(N) / Op(head))
-                          for the match and each capture. Use this
-                          when --distinct on compound guards would
-                          otherwise dump huge subtrees.
-    --format plain|json   json emits one match per line (or {count: N}
-                          for --count; structured object for --summary).
-    --expand-aliases      inline z3 let-aliases in printed output. Beware
-                          exponential blowup on deeply-shared subterms.
+                          a single tactic name OR `(then t1 t2 ...)`.
+                          Rule of thumb: same tactic chain z3 itself
+                          would run; expect 1–10 s on Certora-sized
+                          goals (hundreds of asserts, max depth 50+).
+    --show captures       per-match: append `?name=full-binding`. ⚠
+                          Foot-gun: a single compound capture can dump
+                          hundreds of lines per match (a 3-distinct-match
+                          query produced 403 lines in one real session).
+                          Prefer --show kind first; reach for captures
+                          only after confirming captures are atomic.
+    --show kind           per-match: ONE-LINE kind summary —
+                          Var(name) / Numeral(N) / Op(head) — for the
+                          match and each capture.
+    --check-pattern       validate PATTERN syntax and exit; skip file
+                          I/O and --apply entirely.
+    --format plain|json   see "json schema" below.
+    --expand-aliases      inline z3 let-aliases in printed output.
+                          Beware exponential blowup on deeply-shared
+                          subterms.
+
+  json schema:
+    --count    {"count": N}
+    --list,
+    --distinct one record per line. Default:
+                 {"expr": "<str>",
+                  "captures"?: {"<name>": "<str>", ...}}
+               With --show kind:
+                 {"kind": "<str>",
+                  "captures"?: {"<name>": "<kind-str>", ...}}
+    --summary  {"asserts": N,
+                "decls_by_sort": {"<sort>": N, ...},
+                "top_ops": {"<op>": N, ...},
+                "shape_counts": {"<pattern>": N, ...},
+                "max_depth": N}
+
+  exit codes:
+    0  success (regardless of match count)
+    1  runtime error: file not found, SMT2 parse failure, tactic apply
+                      raised z3 exception
+    2  usage / parse error: bad pattern, bad tactic syntax, conflicting
+                            flags, argparse-level errors
+
+  typical session:
+    # 1. quick read on a new file
+    lemur sgrep FILE.smt2
+
+    # 2. what does the solver actually see?
+    lemur sgrep FILE.smt2 \\
+      --apply '(then simplify propagate-values solve-eqs)'
+
+    # 3. extract atomic-Bool guards (split candidates)
+    lemur sgrep FILE.smt2 \\
+      --apply '(then simplify propagate-values solve-eqs)' \\
+      '(div (ite ?c:Var _ _) _)' --distinct --show captures
+
+  common combinations:
+    --apply 'CHAIN' --summary
+        → "what does the solver see after preprocessing?"
+    '(op (ite ?c:Var _ _) _)' --distinct --show captures
+        → "extract distinct atomic-Bool guards under this operator"
+    '(op (ite ?c _ _) _)' --distinct --show kind
+        → "classify guards by kind without dumping subtrees"
+    '(op (ite ?c:Eq _ _) _)' --distinct
+        → "find ITEs guarded by an equality predicate"
+    --apply 'CHAIN' --format json
+        → "scriptable output of post-preprocessing structure"
+
+  related:
+    lemur sdiff --agent  — structural diff between two SMT2 files
+                           (composes sgrep's pattern syntax).
 """,
     'sdiff': """\
-lemur sdiff A.smt2 B.smt2 [--apply TACTIC] [--pattern PATTERN]
-  why: structural diff between two SMT2 files. Same shape table as
-       `sgrep --summary`, run on both files, with A-count, B-count and
-       delta. Tells you "encoder Pattern-3 went from 39 occurrences to
-       0" without staring at unified diffs of mangled SMT2.
+lemur sdiff A.smt2 B.smt2 [--apply TACTIC | --apply-a T --apply-b T]
+  why: structural-count diff between two SMT2 files. Tells you "encoder
+       Pattern-3 went from 39 occurrences to 0" without staring at
+       unified diffs of mangled SMT2. Same shape table as
+       `sgrep --summary`, run on both files, with A / B / delta columns.
 
-  default mode: full shape table. --pattern PATTERN restricts to one
-  user-supplied sgrep-style pattern.
+  decide:
+    A and B are different files       → A.smt2 B.smt2  +  --apply
+    same source, two preprocessing
+      pipelines (the self-diff trick) → A.smt2 A.smt2  +  --apply-a/-b
+    only care about one pattern       → --pattern PATTERN
+    surface unchanged rows too        → --show-same
+    scripting downstream              → --format json
+
+  modes:
+    default          full shape table. Rows: `asserts`,
+                     `declarations (Sort)` per Sort, every shape from
+                     sgrep's "summary shape counts", `max nesting depth`.
+    --pattern PAT    restrict to one user-supplied sgrep-style pattern.
 
   flags:
-    --apply 'TACTIC'      apply same tactic to both before diffing
-                          (e.g. compare baseline-pv_se vs experimental).
-    --apply-a 'TACTIC'    asymmetric mode: apply this tactic only to A.
-    --apply-b 'TACTIC'    asymmetric mode: apply this tactic only to B.
-                          Use both together to compare two preprocessing
-                          pipelines against the *same* source file:
+    --apply 'TACTIC'      symmetric: apply same tactic to both A and B.
+    --apply-a 'TACTIC'    asymmetric: tactic only for A.
+    --apply-b 'TACTIC'    asymmetric: tactic only for B.
+                          --apply is mutually exclusive with --apply-a/-b.
+                          The same-source self-diff trick:
                             lemur sdiff F.smt2 F.smt2 \\
                               --apply-a 'simplify' \\
                               --apply-b '(then simplify propagate-values)'
-                          --apply is mutually exclusive with --apply-a/-b.
+                          tells you what the second pipeline added.
     --show-same           include rows where A == B (default: hide).
-    --format plain|json   json emits {a, b, rows: [{shape, a, b, delta}]}.
+    --format plain|json   see "json schema" below.
     --expand-aliases      same as sgrep.
+
+  json schema:
+    {"a": "<path>", "b": "<path>",
+     "rows": [{"shape": "<str>", "a": N, "b": N, "delta": N}, ...]}
+    delta = b - a; positive ⇒ B has more.
+
+  exit codes:
+    0  success
+    1  runtime error (file not found, SMT2 parse failure, tactic apply
+                      raised z3 exception)
+    2  usage / parse error (bad pattern, bad tactic, conflicting --apply
+                            flags, argparse-level errors)
+
+  typical session:
+    # A and B are different files (e.g. hard leaf vs trivial)
+    lemur sdiff hard.smt2 trivial.smt2 \\
+      --apply '(then simplify propagate-values solve-eqs)'
+
+    # Same source, two pipelines: what did solve-eqs introduce?
+    lemur sdiff bench.smt2 bench.smt2 \\
+      --apply-a '(then simplify propagate-values)' \\
+      --apply-b '(then simplify propagate-values solve-eqs)'
+
+  related:
+    lemur sgrep --agent  — pattern syntax, tactic grammar, --check-pattern.
 """,
 }
 

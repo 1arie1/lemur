@@ -33,6 +33,11 @@ def register(subparsers):
     p.add_argument('--apply', metavar='TACTIC', default=None,
                    help='Apply z3 tactic before searching. Accepts a single '
                         'tactic name or a `(then t1 t2 ...)` chain.')
+    p.add_argument('--check-pattern', action='store_true',
+                   help='Validate the positional PATTERN syntactically and '
+                        'exit. Skips file I/O and tactic application — use '
+                        'while iterating on a pattern to short-circuit slow '
+                        '--apply cycles. Exits 0 on valid, 2 on error.')
     p.add_argument('--show', choices=['captures', 'kind'], default=None,
                    help='Per-match extras: `captures` prints full capture '
                         'bindings; `kind` prints a one-line classification '
@@ -58,12 +63,44 @@ def _eff_mode(args) -> str:
 def run(args):
     from lemur import sgrep
 
+    mode = _eff_mode(args)
+    if mode == 'summary' and args.pattern is not None:
+        print("Error: --summary with a positional pattern is ambiguous; "
+              "drop one.", file=sys.stderr)
+        sys.exit(2)
+    if mode != 'summary' and args.pattern is None:
+        print("Error: pattern required for --count/--list/--distinct.",
+              file=sys.stderr)
+        sys.exit(2)
+
+    z3 = sgrep._import_z3()
+
+    # Validate user-input strings (pattern, tactic) up front. This shaves
+    # the slow --apply round-trip off the iteration loop when the user is
+    # tweaking a pattern.
+    pat = None
+    if args.pattern is not None:
+        try:
+            pat = sgrep.parse_pattern(args.pattern)
+        except sgrep.PatternError as e:
+            print(f"Error: pattern: {e}", file=sys.stderr)
+            sys.exit(2)
+    if args.check_pattern:
+        # Pattern is valid; that's all the user wanted.
+        return
+    tac = None
+    if args.apply:
+        try:
+            tac = sgrep.parse_tactic(z3, args.apply)
+        except sgrep.TacticParseError as e:
+            print(f"Error: --apply: {e}", file=sys.stderr)
+            sys.exit(2)
+
     bench = Path(args.file).resolve()
     if not bench.exists():
         print(f"Error: file not found: {bench}", file=sys.stderr)
         sys.exit(1)
 
-    z3 = sgrep._import_z3()
     sgrep.set_pp_aliases(z3, args.expand_aliases)
 
     try:
@@ -72,17 +109,11 @@ def run(args):
         print(f"Error: parse failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-    tac = None
-    if args.apply:
-        try:
-            tac = sgrep.parse_tactic(z3, args.apply)
-        except sgrep.TacticParseError as e:
-            print(f"Error: --apply: {e}", file=sys.stderr)
-            sys.exit(2)
+    if tac is not None:
         goal = sgrep.apply_tactic_to_goal(z3, goal, tac)
 
     try:
-        _do_run(z3, sgrep, goal, args)
+        _do_run(z3, sgrep, goal, pat, mode, args)
     finally:
         # Drop z3 native refs so the atexit handler doesn't surface them as
         # 'Uncollected memory' warnings on debug builds.
@@ -92,15 +123,8 @@ def run(args):
             gc.collect()
 
 
-def _do_run(z3, sgrep, goal, args) -> None:
-
-    mode = _eff_mode(args)
-
+def _do_run(z3, sgrep, goal, pat, mode, args) -> None:
     if mode == 'summary':
-        if args.pattern is not None:
-            print("Error: --summary with a positional pattern is ambiguous; "
-                  "drop one.", file=sys.stderr)
-            sys.exit(2)
         s = sgrep.compute_summary(z3, goal)
         if args.format == 'json':
             print(json.dumps(_summary_to_jsonable(s), indent=2))
@@ -108,18 +132,7 @@ def _do_run(z3, sgrep, goal, args) -> None:
             _render_summary(s)
         return
 
-    if args.pattern is None:
-        print("Error: pattern required for --count/--list/--distinct.",
-              file=sys.stderr)
-        sys.exit(2)
-
-    try:
-        p = sgrep.parse_pattern(args.pattern)
-    except sgrep.PatternError as e:
-        print(f"Error: pattern: {e}", file=sys.stderr)
-        sys.exit(2)
-
-    matches = sgrep.find_matches(z3, p, sgrep.goal_top_level_exprs(goal))
+    matches = sgrep.find_matches(z3, pat, sgrep.goal_top_level_exprs(goal))
 
     if mode == 'count':
         if args.format == 'json':
