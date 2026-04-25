@@ -45,38 +45,134 @@ another lemur command will consume.
 
 SECTIONS = {
     'sweep': """\
-lemur sweep BENCH.smt2 --seeds 0-15 --timeout 30
-  (also: lemur sweep LEAVES_DIR/  — directory mode; reads plan.json written
-   by `lemur split` and treats each non-pruned leaf as an implicit split;
-   pruned leaves surface in the tally as pre-closed UNSAT; plan.json is the
-   authoritative manifest so extra files in the dir are ignored.)
-  why: parallel z3 pool with process-group kill on Ctrl-C/timeout/--stop-on,
-       per-run tmpdir isolation (traces don't collide), streaming CSV.
+lemur sweep BENCH.smt2 [...] | lemur sweep LEAVES_DIR/
+  why: parallel z3 pool with process-group kill on Ctrl-C / timeout /
+       --stop-on (no orphaned z3 processes), per-run tmpdir isolation
+       (traces don't collide), streaming CSV (rows flush as runs complete).
 
-  config expansion:
-    --config "name: key=val"    named config; repeatable; quote ws values
-    --grid key=v1,v2,v3         cross-products; repeatable; combined with --config
-    --split "name:<smt>"        inject before (check-sat); cross-products
-                                splits × configs × seeds; adds `split` column;
-                                prints per-split closure summary
-  execution:
-    -j N|auto                   parallel jobs (auto = os.cpu_count())
-    --stop-on sat|unsat         abort whole sweep on first matching result
+  decide:
+    quick triage on one bench         → BENCH.smt2 --seeds 0-15 --timeout 30
+    A vs B config comparison          → --config 'A: ...' --config 'B: ...'
+    parameter cross-product            → --grid key=v1,v2,v3
+    UNSAT-by-decomposition workflow   → --split ... or LEAVES_DIR/
+                                        + --stop-on-per-split unsat --tally
+    save raw outputs per run          → --save DIR
+    z3 stats counters                 → --stats (with --save → .stats.json/run)
+    abort on first sat/unsat          → --stop-on
+    streaming, pipe-friendly CSV      → -f plain (auto-default off-tty)
+
+  modes:
+    BENCH.smt2          single benchmark; classic seeds × configs × splits.
+    LEAVES_DIR/         directory mode. Reads <dir>/plan.json (written by
+                        `lemur split`) and treats every non-pruned leaf as
+                        an implicit split. Pruned leaves surface in the
+                        tally as pre-closed UNSAT. plan.json is the
+                        authoritative manifest — extra .smt2 files in the
+                        directory are ignored.
+
+  config / grid / split grammar:
+    --config "name: key=val key=val"
+        Named z3 config; repeatable. Quote whitespace values:
+          --config 'A: smt.arith.solver=2'
+          --config 'B: tactic.default_tactic="(then simplify smt)"'
+    --grid "key=v1,v2,v3"
+        Cross-product expansion; repeatable. Combined with --config bases.
+    --split "name:<smt>"
+        Inject `<smt>` before (check-sat). Repeatable. Cross-products with
+        configs × seeds and adds a `split` column to CSV / tally.
+
+  flags (input):
+    BENCH | LEAVES_DIR  positional: SMT2 file or split-output directory.
+    --seeds RANGE       0-15, 1,3,5, or 0-3,7. Default: 0-3.
+    --timeout SECS      per-run wall-clock timeout. Default: 30.
+    --z3 PATH           z3 binary. Default: ~/ag/z3/z3-edge/build/z3.
+    --verbosity N       z3 -v:N. Default: 2; pass 0 to disable.
+
+  flags (execution):
+    -j N | -j auto      parallel jobs. auto = os.cpu_count(). Default: 1.
+    --stop-on sat|unsat
+                        abort the entire sweep on first matching status.
     --stop-on-per-split sat|unsat
-                                scope --stop-on to each split: close a split
-                                on its first matching run, skip that split's
-                                remaining runs, continue others. requires
-                                --split OR directory mode; incompatible with
-                                --stop-on; composes with --fail-fast. the
-                                canonical UNSAT-by-decomposition loop.
-    --fail-fast                 abort on first timeout/unknown/error
-  output:
-    --tally                     per-config aggregation after CSV
-    --trace nla_solver,nra      capture .z3-trace (requires --save for files)
-    --stats                     add z3 -st; with --save writes .stats.json
-    --save DIR                  save stdout/stderr/trace/.stats.json per run
-    -f plain                    streaming CSV (row-per-run); safe for pipes
-  sweep prints copy-pasteable z3 commands at end unless --no-commands.
+                        scope --stop-on per split: close a split on its
+                        first matching run, then skip its remaining runs.
+                        Requires --split or directory mode. Mutually
+                        exclusive with --stop-on; composes with --fail-fast.
+    --fail-fast         abort on first timeout/unknown/error.
+
+  flags (output):
+    -f rich|plain|json  output format. Plain emits CSV (see schema).
+                        Default: rich on tty, plain otherwise.
+    --tally             append per-(split,)config aggregation. Forced on
+                        whenever splits are present.
+    --no-commands       suppress trailing copy-pasteable z3 command list.
+    --no-color          disable color in rich output.
+    --save DIR          per-run files: stdout, stderr, .z3-trace, .stats.json.
+    --trace TAGS        comma-separated trace tags (e.g. nla_solver,nra).
+                        Captures .z3-trace; with --save writes per run.
+    --z3-log            enable z3 AST trace log (trace=true). Requires --save.
+    --stats             enable z3 -st; with --save writes
+                        <config>_s<seed>.stats.json per run (consumed by
+                        `lemur stats-compare`).
+
+  csv schema (plain output, streamed; row-per-run as runs complete):
+    columns: [split,] config, seed, status, time_s
+        split   present iff --split or directory mode.
+        status  one of: sat | unsat | timeout | unknown | error.
+        time_s  wall-clock seconds, fixed 3 decimals.
+
+  tally schema (printed after sweep when --tally or splits are present):
+    plain (CSV): [split,] config, total, sat, unsat, timeout, unknown,
+                 error, fastest_sat_time_s, fastest_sat_seed,
+                 fastest_unsat_time_s, fastest_unsat_seed
+    json:        [ {config, total, sat, unsat, timeout, unknown, error,
+                    fastest_sat:  {"time_s": F, "seed": N} | null,
+                    fastest_unsat:{"time_s": F, "seed": N} | null,
+                    split?: "<name>"}, ... ]
+
+  exit codes:
+    0  every scheduled run completed (regardless of sat/unsat outcome).
+       --stop-on and --fail-fast truncate the sweep but the process still
+       exits 0 on a clean truncation.
+    2  argparse usage error.
+    other non-zero: unhandled exception (z3 not found, save-dir
+       unwritable, etc.).
+
+  performance: total wall ≈ (n_seeds × n_configs × n_splits) / jobs ×
+  per-run-time. Use -j auto + --stop-on-per-split unsat to skip
+  already-closed splits.
+
+  typical session:
+    # 1. seed triage
+    lemur sweep bench.smt2 --seeds 0-15 --timeout 30 --tally -f plain > out.csv
+    lemur tally out.csv
+
+    # 2. UNSAT by decomposition (auto-discovered splits)
+    lemur split bench.smt2 --out leaves/
+    lemur sweep leaves/ --seeds 0-7 --timeout 10 \\
+      --stop-on-per-split unsat --tally -f plain
+
+    # 3. config A vs B with stats
+    lemur sweep bench.smt2 --seeds 0-7 --timeout 30 --stats --save ./out \\
+      --config 'A: smt.arith.solver=2' --config 'B: smt.arith.solver=6'
+    lemur stats-compare ./out --top 20
+
+  common combinations:
+    --seeds 0-15 --tally -f plain
+        → seed triage CSV; pipe to `lemur tally`
+    --split ... --split ... --stop-on-per-split unsat --tally
+        → close each disjunct independently
+    --config A --config B --stats --save DIR
+        → A-vs-B with z3 stats; feed to `lemur stats-compare DIR`
+    --trace nla_solver --save DIR
+        → produce .z3-trace for `lemur nla` / `lemur search`
+
+  related:
+    lemur tally          structured aggregation of a sweep CSV.
+    lemur stats-compare  side-by-side z3 stats from --stats --save.
+    lemur split          auto-discover Boolean splits → leaf SMT2 dir.
+    lemur split-status   walk a recursive split tree.
+    lemur search         grep over .z3-trace files.
+    lemur nla            structured nla_solver lemma drill-down.
 """,
     'tally': """\
 lemur tally SWEEP.csv
@@ -107,33 +203,148 @@ lemur stats TRACE
 """,
     'nla': """\
 lemur nla TRACE
-  why: parses nla_solver / ~lemma_builder entries into structured
-       LemmaRecord (strategy, preconditions, conclusion, variable
-       assignments with bounds/definition/root, detected monomials).
-       regex alone misses the structure; this tool gives you a typed
-       view + filters.
+  why: parses ~lemma_builder entries from an nla_solver trace into
+       structured LemmaRecord (strategy, preconditions, conclusion,
+       variable assignments with bounds/definition/root, detected
+       monomials). Regex over text misses the nesting; this gives a
+       typed view + filters.
 
-  modes (mutually exclusive):
-    --list / -l              one line per lemma
-    --detail N / -d N        full variable table for Nth lemma
-    --details RANGE          ranges: 3, 5:10, 2-4, :5, 12:
-    --no-varmap              show raw j-vars instead of SMT names
-  filters (compose; renumber from 1):
-    --strategy SUB           keep lemmas whose strategy contains SUB (repeatable)
-    --min-vars N             keep lemmas with >= N variables
-    --min-preconds N         keep lemmas with >= N preconditions
-    --min-monomials N        keep lemmas with >= N monomials
-    --top-by FIELD --top-n N  sort by {vars,preconds,monomials} desc, keep top N
+  decide:
+    file overview / first look       → no flags (default summary)
+    one line per lemma               → --list / -l
+    full table for one lemma         → --detail N (1-based, post-filter)
+    full table for a range           → --details RANGE
+    show raw j-vars (debug)          → --no-varmap
+    keep only lemmas matching X      → --strategy / --min-* / --top-by
+
+  modes (mutually exclusive, exactly one is active):
+    (default summary)        entry counts, unique functions,
+                             per-call statistics, top-N lemma previews
+                             (count = --limit, default 5), and variable-
+                             change deltas (count = --delta-limit,
+                             default 5).
+    --list, -l               one line per lemma after filters.
+    --detail N               full variable + monomial table for the
+                             Nth lemma. 1-based; numbers refer to the
+                             post-filter list, not the original trace.
+    --details RANGE          multiple details. RANGE syntax is Python-
+                             slice-like: `3` (single) | `5:10` | `2-4` |
+                             `:5` (head) | `12:` (tail).
+
+  filters (compose with AND; renumbering after filtering is 1-based):
+    --strategy SUB        keep lemmas whose strategy contains SUB,
+                          case-insensitive. Repeatable: matches ANY
+                          (substring OR over the supplied list).
+    --min-vars N          keep lemmas with ≥ N variables.
+    --min-preconds N      keep lemmas with ≥ N preconditions.
+    --min-monomials N     keep lemmas with ≥ N detected monomials.
+    --top-by FIELD        sort descending by FIELD ∈ {vars, preconds,
+                          monomials}. Use with --top-n.
+    --top-n N             after --top-by, keep only top N.
+
+  output flags:
+    -f rich|plain         rich on TTY, plain otherwise. ⚠ The argparse
+                          choice `json` is currently a no-op (falls
+                          through to plain) — known limitation; treat
+                          plain as the canonical machine-readable form.
+    --no-color            disable color in rich.
+    --no-varmap           show raw LP j-variables (j7, j143) instead
+                          of resolved SMT names.
+    --limit N             summary mode: number of lemma previews
+                          (default 5).
+    --delta-limit N       summary mode: max variable-change lines
+                          (default 5).
+
+  exit codes:
+    0  success (including the case where filters exclude every lemma —
+       a `No lemmas found.` informational message goes to stderr).
+    2  argparse usage error.
+    other non-zero: unhandled exception (trace parse failure, etc.).
+
+  typical session:
+    # 1. file overview
+    lemur nla ./out/A_s3.trace
+
+    # 2. list every grobner-strategy lemma
+    lemur nla ./out/A_s3.trace --strategy grob --list
+
+    # 3. top-5 widest lemmas (most variables)
+    lemur nla ./out/A_s3.trace --top-by vars --top-n 5
+
+    # 4. detail on the 3rd lemma after filtering
+    lemur nla ./out/A_s3.trace --strategy grob --detail 3
+
+  related:
+    lemur sweep --trace nla_solver --save  produces the trace files.
+    lemur search                           grep / filter the same trace.
+    lemur stats                            tag/function aggregates.
 """,
     'search': """\
 lemur search TRACE [PATTERN] [--tag RE] [--fn RE] [-n] [--entries]
-  why: trace-aware grep. --tag/--fn are regexes on structural fields,
-       so --tag '^nla' matches every [nla_*] entry header, not just
-       occurrences of the string. --entries prints the whole matching
-       block (header + body + footer) so you keep context.
-       line numbers are absolute into the file, so editor-jumpable.
-  PATTERN optional: omit to dump every line in filtered entries.
-  -i/-v/-c/--max-count standard. exit 0 match, 1 no match, 2 regex error.
+  why: trace-aware grep. Z3 TRACE files have a block structure
+       (header / body / footer). --tag '^nla' matches every
+       [nla_*] entry HEADER structurally, not just any line that
+       happens to contain "nla". Line numbers are absolute into the
+       file (editor-jumpable). --entries prints whole blocks for
+       context.
+
+  decide:
+    just match a body-line pattern    → search TRACE PATTERN
+    filter to specific tag(s)         → --tag REGEX
+    filter to specific function(s)    → --fn REGEX
+    dump every line in matching tags  → omit PATTERN (keep --tag/--fn)
+    count without printing            → -c
+    cap output at N matches           → --max-count N
+    invert match                      → -v
+    case-insensitive                  → -i
+    print full entry blocks           → --entries
+    line numbers for editor jump      → -n
+
+  inputs:
+    TRACE        path to .z3-trace file (from `lemur sweep --trace`).
+    PATTERN      optional regex (re.search semantics) over body lines.
+                 Omit to dump every line in entries passing tag/fn.
+    --tag RE     re.search against entry tag (the bracketed token in
+                 `-------- [TAG] fn file:line --------`). Anchor with
+                 ^/$ as needed: `--tag '^nla'` matches `[nla_solver]`,
+                 `[nla_grobner]`, etc.
+    --fn RE      re.search against entry function name.
+
+  output formats:
+    default                    one matching body line per row.
+    -n / --line-number         prefix every line with `<abs_lineno>:`
+                               (header lines too, when --entries).
+    --entries                  each matching block printed as:
+                                 -------- [tag] fn file:line --------
+                                 body-line
+                                 body-line
+                                 ...
+                                 ------------------------------------------------
+    -c / --count               without --entries: print N (line count).
+                               with --entries: print `N entries, M lines`.
+
+  rich output (TTY default) highlights matched substrings; -f plain
+  disables color and prints the same content without ANSI.
+
+  exit codes:
+    0  ≥ 1 match printed/counted.
+    1  no match (grep convention).
+    2  invalid regex in PATTERN, --tag, or --fn (or argparse usage error).
+
+  typical session:
+    # nla_solver entries containing 'calls' inside the `check` function
+    lemur search ./out/A_s3.trace 'calls' --fn '^check$' --entries -n
+
+    # count nla_solver entries
+    lemur search ./out/A_s3.trace --tag '^nla_solver$' -c
+
+    # dump every line in any [nla_*] entry, no pattern filter
+    lemur search ./out/A_s3.trace --tag '^nla'
+
+  related:
+    lemur stats   tag/function aggregates over a trace.
+    lemur nla     structured nla_solver lemma drill-down.
+    lemur sweep --trace nla_solver --save  produces the trace files.
 """,
     'split': """\
 lemur split BENCH.smt2 [--out DIR] [--max-leaves N]
