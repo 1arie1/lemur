@@ -39,14 +39,20 @@ def _import_z3():
 # --- Pattern AST -------------------------------------------------------------
 
 
+_TYPE_FILTERS = ('Bool', 'Numeral', 'Var', 'Expr')
+
+
 @dataclass
 class PWild:
-    pass
+    type_filter: str | None = None   # None = no filter; 'Expr' is also no-op
+    negate: bool = False             # invert the type-filter result
 
 
 @dataclass
 class PCapture:
     name: str
+    type_filter: str | None = None
+    negate: bool = False
 
 
 @dataclass
@@ -77,6 +83,77 @@ def _tokenize(s: str) -> list[str]:
     return out
 
 
+def _parse_atom(tok: str) -> PNode:
+    """Parse a non-paren leaf token into PWild / PCapture / PCompound.
+
+    Recognized forms (where TYPE ∈ {Bool, Numeral, Var, Expr}):
+        _                wildcard, no filter
+        _:TYPE           wildcard with positive type filter
+        _:!TYPE          wildcard with negative type filter
+        !_:TYPE          equivalent prefix-negation form
+        ?name            capture, no filter
+        ?name:TYPE       capture with positive type filter
+        ?name:!TYPE      capture with negative type filter (inner `!`)
+        !?name:TYPE      capture with negative type filter (prefix `!`)
+        NAME             bare literal symbol — match a 0-arity expr with
+                         decl name == NAME (e.g. POW2_64).
+
+    Both negation surface forms are accepted; if both are present the
+    flags XOR (so `!?x:!Numeral` ≡ `?x:Numeral` — double-negation cancels).
+    """
+    s = tok
+    outer_neg = False
+    if s.startswith('!'):
+        outer_neg = True
+        s = s[1:]
+        if not s:
+            raise PatternError(f"`!` with nothing to negate: {tok!r}")
+
+    # Capture or wildcard?
+    if s.startswith('?'):
+        body = s[1:]
+        name, type_filter, inner_neg = _split_type_part(body, tok)
+        if not name:
+            raise PatternError(f"empty capture name: {tok!r}")
+        return PCapture(name=name, type_filter=type_filter,
+                        negate=outer_neg ^ inner_neg)
+    if s == '_' or s.startswith('_:'):
+        body = '' if s == '_' else s[2:]
+        name, type_filter, inner_neg = _split_type_part('_' + (':' + body if body else ''), tok)
+        # name is '_' here; ignore. Build wildcard.
+        return PWild(type_filter=type_filter, negate=outer_neg ^ inner_neg)
+
+    # Bare literal symbol — outer negation is meaningless.
+    if outer_neg:
+        raise PatternError(f"`!` only applies to wildcards/captures: {tok!r}")
+    if ':' in s:
+        raise PatternError(f"type filter `:` not allowed on literal name: {tok!r}")
+    return PCompound(head=s, children=[])
+
+
+def _split_type_part(body: str, orig_tok: str) -> tuple[str, str | None, bool]:
+    """For a body like `name`, `name:Type`, `name:!Type`, `_`, `_:Type`,
+    `_:!Type`, return (name, type_filter_or_None, inner_negate).
+
+    The body has already had the outer `!` and the leading `?` (if any)
+    stripped. For wildcards, body starts with `_`.
+    """
+    if ':' not in body:
+        return body, None, False
+    name, _, type_part = body.partition(':')
+    inner_neg = False
+    if type_part.startswith('!'):
+        inner_neg = True
+        type_part = type_part[1:]
+    if type_part not in _TYPE_FILTERS:
+        raise PatternError(
+            f"unknown type filter {type_part!r} in {orig_tok!r}; "
+            f"expected one of {', '.join(_TYPE_FILTERS)}")
+    # Treat 'Expr' as 'no filter' (it's the documented default).
+    tf = None if type_part == 'Expr' else type_part
+    return name, tf, inner_neg
+
+
 def parse_pattern(s: str) -> PNode:
     """Parse a pattern string into a PNode. Raises PatternError on malformed
     input."""
@@ -94,7 +171,8 @@ def parse_pattern(s: str) -> PNode:
             if pos[0] >= len(toks):
                 raise PatternError("missing head after '('")
             head = toks[pos[0]]
-            if head in ('(', ')') or head.startswith('?') or head == '_':
+            if (head in ('(', ')') or head.startswith('?') or head == '_'
+                    or head.startswith('!') or ':' in head):
                 raise PatternError(
                     f"compound head must be a literal symbol, got {head!r}")
             pos[0] += 1
@@ -107,14 +185,7 @@ def parse_pattern(s: str) -> PNode:
             return PCompound(head=head, children=children)
         if t == ')':
             raise PatternError("unexpected ')'")
-        if t == '_':
-            return PWild()
-        if t.startswith('?'):
-            name = t[1:]
-            if not name:
-                raise PatternError("empty capture name '?'")
-            return PCapture(name=name)
-        raise PatternError(f"bare literal atoms not supported in v1: {t!r}")
+        return _parse_atom(t)
 
     node = parse()
     if pos[0] != len(toks):
@@ -134,12 +205,37 @@ _HEAD_ALIASES = {
 }
 
 
+def _check_type(z3, e, tf: str | None) -> bool:
+    """Return True iff `e` satisfies the type filter `tf`. tf=None means
+    no filter (always passes)."""
+    if tf is None:
+        return True
+    if tf == 'Bool':
+        return e.sort().kind() == z3.Z3_BOOL_SORT
+    if tf == 'Numeral':
+        return (z3.is_int_value(e) or z3.is_rational_value(e)
+                or z3.is_bv_value(e) or z3.is_algebraic_value(e))
+    if tf == 'Var':
+        return (z3.is_app(e) and e.decl().arity() == 0
+                and e.decl().kind() == z3.Z3_OP_UNINTERPRETED)
+    raise AssertionError(f"unknown type filter: {tf!r}")
+
+
+def _type_matches(z3, e, tf: str | None, negate: bool) -> bool:
+    if tf is None:
+        return True
+    ok = _check_type(z3, e, tf)
+    return (not ok) if negate else ok
+
+
 def match(z3, p: PNode, e, env: dict[str, object]) -> bool:
     """Return True iff `e` matches `p`. Mutates `env` with capture bindings;
     captures unify by z3 expression id-equality."""
     if isinstance(p, PWild):
-        return True
+        return _type_matches(z3, e, p.type_filter, p.negate)
     if isinstance(p, PCapture):
+        if not _type_matches(z3, e, p.type_filter, p.negate):
+            return False
         prev = env.get(p.name)
         if prev is not None:
             return prev.get_id() == e.get_id()
