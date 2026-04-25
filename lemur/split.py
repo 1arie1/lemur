@@ -81,12 +81,13 @@ class Plan:
     version: int = PLAN_VERSION
     lemur_version: str = LEMUR_VERSION
     results: dict | None = None      # reserved for Phase 2 sweep annotation
+    implied_units: dict[str, bool] = field(default_factory=dict)
+    # ^ Booleans the formula already forces, discovered during candidate
+    #   scoring (one-sided collapse). Recorded so downstream tools can see
+    #   which predicates were detected as redundant; not picked as splits.
 
 
 # --- Scoring -----------------------------------------------------------------
-
-
-_SCORE_COLLAPSE = 10_000.0
 
 
 @dataclass
@@ -306,7 +307,8 @@ def _score_with_assumption(z3, goal, name: str, value: bool, tactic,
     try:
         collapsed = any(r[i].inconsistent() for i in range(len(r)))
         if collapsed:
-            return _SCORE_COLLAPSE, True, elapsed_ms
+            # Caller branches on the bool flag; gain is unused for collapses.
+            return 0.0, True, elapsed_ms
         leaf_metrics = _measure_apply_result(z3, r, probes)
     finally:
         # Explicit release — these hold native z3 refs we don't need anymore.
@@ -342,6 +344,51 @@ def _apply_measure(z3, goal, tactic, probes: dict) -> _Metrics:
         return m
     try:
         return _measure_apply_result(z3, r, probes)
+    finally:
+        del r
+
+
+def _presimplify(z3, goal, tactic):
+    """Apply `tactic` once to `goal`. Return (new_goal, status_dict).
+
+    On success with a single resulting subgoal, return that subgoal as the
+    new goal — Booleans resolved by propagate-values / solve-eqs are gone
+    from it, so they won't appear as split candidates downstream.
+
+    On multi-subgoal output (disjunctive split — uncommon for our chain) or
+    on z3 exception, fall back to the original goal. `status` carries
+    counters/flags for the caller to log."""
+    status = {
+        'asserts_in': goal.size(),
+        'asserts_out': goal.size(),
+        'subgoals': 1,
+        'fallback': False,
+        'reason': None,
+        'elapsed_ms': 0.0,
+    }
+    t0 = time.monotonic()
+    try:
+        r = tactic.apply(goal)
+    except z3.Z3Exception as e:
+        status['fallback'] = True
+        status['reason'] = f"tactic exception: {e}"
+        status['elapsed_ms'] = (time.monotonic() - t0) * 1000
+        return goal, status
+    try:
+        n_sub = len(r)
+        status['subgoals'] = n_sub
+        if n_sub != 1:
+            status['fallback'] = True
+            status['reason'] = f"{n_sub} subgoals"
+            status['elapsed_ms'] = (time.monotonic() - t0) * 1000
+            return goal, status
+        sg = r[0]
+        new_goal = z3.Goal()
+        for j in range(sg.size()):
+            new_goal.add(sg[j])
+        status['asserts_out'] = new_goal.size()
+        status['elapsed_ms'] = (time.monotonic() - t0) * 1000
+        return new_goal, status
     finally:
         del r
 
@@ -419,6 +466,23 @@ def build_plan(
         'is-qflia': z3.Probe('is-qflia'),
     }
 
+    # Pre-simplify the goal once. propagate-values + solve-eqs in the chain
+    # eliminate Booleans pinned by syntactic units or by value/equality
+    # propagation, so they don't enter candidate enumeration. A separate
+    # tactic with a longer budget — the per-candidate `tactic` budget is
+    # tighter than what we want here.
+    presimplify_tactic = _simplify_tactic(z3, probe_timeout * 4)
+    goal, ps = _presimplify(z3, goal, presimplify_tactic)
+    timings['presimplify'] = ps['elapsed_ms'] / 1000
+    if log:
+        if ps['fallback']:
+            log(f"presimplify: fallback to original goal ({ps['reason']}, "
+                f"{ps['elapsed_ms']:.0f}ms)")
+        else:
+            log(f"presimplify: {ps['asserts_in']}→{ps['asserts_out']} asserts "
+                f"({ps['elapsed_ms']:.0f}ms)")
+    del presimplify_tactic
+
     t0 = time.monotonic()
     current_goal = goal
     base_metrics = _apply_measure(z3, current_goal, tactic, probes)
@@ -429,89 +493,110 @@ def build_plan(
 
     plan_cands: list[Candidate] = []
     picked_names: set[str] = set()
+    implied_units: dict[str, bool] = {}
     max_splits = _ceil_log2(max_leaves)
 
     greedy_t0 = time.monotonic()
-    for it in range(max_splits):
+    picks_made = 0
+    while picks_made < max_splits:
         t_iter = time.monotonic()
         names = [n for n in _enumerate_candidates(
                     z3, current_goal, name_pattern, restrict_pattern)
                  if n not in picked_names]
         if not names:
-            if log: log(f"iter {it+1}: no candidates, stopping")
+            if log: log(f"iter {picks_made+1}: no candidates, stopping")
             break
-        if log: log(f"iter {it+1}: scoring {len(names)} candidates ...")
+        if log: log(f"iter {picks_made+1}: scoring {len(names)} candidates ...")
 
-        scored: list[tuple[str, float, str | None, dict[str, float], bool | None]] = []
-        # tuple: (name, score, reduces_on, probe_ms, harder_valuation)
+        # Bucket each candidate as either an implication to harvest (one
+        # side collapses) or a productive split (both sides alive).
+        productive: list[tuple[str, float, dict[str, float], bool]] = []
+        # tuple: (name, score, probe_ms, true_branch_is_harder)
+        harvested: list[tuple[str, bool]] = []  # (name, forced_value)
+
         for n in names:
             gain_t, c_t, ms_t = _score_with_assumption(
                 z3, current_goal, n, True, tactic, base_metrics, probes)
             gain_f, c_f, ms_f = _score_with_assumption(
                 z3, current_goal, n, False, tactic, base_metrics, probes)
 
-            reduces_on = 'true' if c_t else ('false' if c_f else None)
+            if c_t and c_f:
+                # Both branches contradictory — the conjunction so far is
+                # unsat. Skip; don't pick.
+                picked_names.add(n)
+                continue
+            if c_t:
+                harvested.append((n, False))  # n=False is forced
+                picked_names.add(n)
+                continue
+            if c_f:
+                harvested.append((n, True))   # n=True is forced
+                picked_names.add(n)
+                continue
 
-            # Score semantics:
-            # - If either branch collapses to false, rate the split at
-            #   SCORE_COLLAPSE (one side is free; just solve the other).
-            # - Otherwise min(gain_t, gain_f): both leaves must be tractable
-            #   for the UNSAT-by-decomposition workflow.
-            if c_t or c_f:
-                score = _SCORE_COLLAPSE
-            else:
-                score = min(gain_t, gain_f)
+            # Both branches alive — genuine split candidate.
+            score = min(gain_t, gain_f)
+            harder_true = gain_t < gain_f
+            productive.append((n, score,
+                               {'true': round(ms_t, 1), 'false': round(ms_f, 1)},
+                               harder_true))
 
-            # "Harder" branch for re-scoring context: the one without collapse,
-            # or the one with smaller individual gain (worse simplification).
-            if c_t and not c_f:
-                harder = False
-            elif c_f and not c_t:
-                harder = True
-            elif c_t and c_f:
-                harder = None  # both collapse — split is pointless beyond this depth
-            else:
-                harder = gain_t < gain_f   # True-side harder when gain_t smaller
+        # If any implications were discovered, fold them in and re-enumerate
+        # without consuming a max_splits slot. The re-enumeration may surface
+        # NEW productive candidates (or new collapses) once units propagate.
+        if harvested:
+            if log:
+                for n, v in harvested:
+                    log(f"iter {picks_made+1}: harvested {n}={str(v).lower()} "
+                        f"(one-sided collapse)")
+            for n, v in harvested:
+                implied_units[n] = v
+            next_goal = z3.Goal()
+            for i in range(current_goal.size()):
+                next_goal.add(current_goal[i])
+            for n, v in harvested:
+                next_goal.add(z3.Bool(n) if v else z3.Not(z3.Bool(n)))
+            current_goal = next_goal
+            del next_goal
+            base_metrics = _apply_measure(z3, current_goal, tactic, probes)
+            del productive
+            del harvested
+            gc.collect()
+            continue
 
-            scored.append((n, score, reduces_on,
-                           {'true': round(ms_t, 1), 'false': round(ms_f, 1)},
-                           harder))
+        if not productive:
+            if log: log(f"iter {picks_made+1}: no productive candidates, stopping")
+            break
 
         # Sort by score desc; tiebreak by name for determinism.
-        scored.sort(key=lambda s: (-s[1], s[0]))
-        best_name, best_score, best_reduces, best_ms, best_harder = scored[0]
+        productive.sort(key=lambda s: (-s[1], s[0]))
+        best_name, best_score, best_ms, best_harder = productive[0]
 
         if best_score < threshold:
-            if log: log(f"iter {it+1}: best score {best_score:.1f} < threshold "
-                        f"{threshold}, stopping")
+            if log: log(f"iter {picks_made+1}: best score {best_score:.1f} < "
+                        f"threshold {threshold}, stopping")
             break
 
         plan_cands.append(Candidate(
             name=best_name,
             score=round(best_score, 3),
-            reduces_to_false_on=best_reduces,
+            reduces_to_false_on=None,
             probe_ms=best_ms,
         ))
         picked_names.add(best_name)
+        picks_made += 1
 
         if log:
-            rtf = (f", reduces→false on {best_reduces}"
-                   if best_reduces else "")
-            log(f"iter {it+1}: picked {best_name} (score {best_score:.1f}{rtf}) "
+            log(f"iter {picks_made}: picked {best_name} (score {best_score:.1f}) "
                 f"in {(time.monotonic()-t_iter)*1000:.0f}ms")
 
-        # Drop scoring bookkeeping for this iteration.
-        del scored
+        del productive
+        del harvested
         gc.collect()
 
-        if best_harder is None:
-            break
-
         # Step context: assume the harder branch, re-measure base.
-        # Use a fresh local name and `del` it right after reassigning
-        # `current_goal` so the local frame only carries one reference to
-        # the new Goal; otherwise `next_goal` survives the loop and
-        # shows up as a leaked Z3_goal_ref at shutdown.
+        # Fresh-then-del idiom keeps only one reference to the new Goal in
+        # this frame; otherwise the prior binding leaks at shutdown.
         next_goal = z3.Goal()
         for i in range(current_goal.size()):
             next_goal.add(current_goal[i])
@@ -531,6 +616,7 @@ def build_plan(
         source_abs=str(Path(src_path).resolve()),
         split_predicates=plan_cands,
         leaves=leaves,
+        implied_units=implied_units,
     )
 
     if log:
@@ -667,6 +753,7 @@ def _plan_to_json(plan: Plan) -> str:
         "split_predicates": [asdict(c) for c in plan.split_predicates],
         "leaves": [asdict(l) for l in plan.leaves],
         "results": plan.results,
+        "implied_units": plan.implied_units,
     }
     return json.dumps(d, indent=2) + "\n"
 
@@ -700,4 +787,5 @@ def read_plan(path_or_dir: str) -> Plan:
         version=d.get('version', PLAN_VERSION),
         lemur_version=d.get('lemur_version', LEMUR_VERSION),
         results=d.get('results'),
+        implied_units=d.get('implied_units') or {},
     )
