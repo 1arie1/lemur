@@ -8,6 +8,7 @@ from lemur.cli import split as split_cli, split_status
 from lemur.cli import sgrep as sgrep_cli
 from lemur.cli import sdiff as sdiff_cli
 from lemur.cli import nla_diff as nla_diff_cli
+from lemur.cli import nla_run as nla_run_cli
 from lemur.cli import agent_help
 
 
@@ -32,6 +33,7 @@ def main():
     sgrep_cli.register(sub)
     sdiff_cli.register(sub)
     nla_diff_cli.register(sub)
+    nla_run_cli.register(sub)
 
     args, remaining = parser.parse_known_args()
 

@@ -201,6 +201,84 @@ lemur stats TRACE
   --fn FUNC     filter to function(s); repeatable
   -f plain for parsing.
 """,
+    'nla-run': """\
+lemur nla-run BENCH.smt2 [--seed N] [--timeout T] [--tactic '...']
+              [--config K=V] [--z3 PATH] [--keep] [-- nla-flags...]
+  why: capturing an nla_solver trace is otherwise a 3-step ritual
+       (mkdir tmpdir, run z3 with -tr:nla_solver, point lemur nla at
+       the resulting .z3-trace). nla-run does it in one call; the trace
+       lives in a tmpdir that's cleaned up unless you pass --keep. Any
+       analysis flag you'd pass to `lemur nla` flows through after `--`.
+
+  decide:
+    quick file overview              → no extra args (default summary)
+    list every lemma                 → -- --list
+    drill into a specific lemma      → -- --detail N
+    filter by strategy               → -- --strategy SUB
+    save the trace for re-analysis   → --keep (prints tmpdir path)
+    custom tactic chain              → --tactic '(then simplify smt)'
+    extra z3 params                  → --config smt.arith.solver=2
+                                       (repeatable)
+
+  inputs:
+    BENCH.smt2          positional. The benchmark to run z3 against.
+    --seed N            sat / smt / nlsat random seed. Default: 0.
+    --timeout T         z3 timeout in seconds. Default: 30.
+    --tactic STR        value for `tactic.default_tactic`. Quote SMT2
+                        chains, e.g. '(then simplify propagate-values smt)'.
+    --config K=V        extra z3 param. Repeatable. Same syntax as
+                        `lemur sweep --config`'s param part.
+    --z3 PATH           z3 binary. Default: ~/ag/z3/z3-edge/build/z3.
+    --keep              do NOT delete the trace tmpdir on exit; print
+                        its path. Use when you want to re-run `lemur nla`
+                        with different flags without re-running z3.
+
+  forwarding to `lemur nla`:
+    Anything after a literal `--` separator is forwarded verbatim. So:
+      lemur nla-run BENCH --seed 3 -- --list --strategy grob
+    runs z3 + then `lemur nla TRACE --list --strategy grob`.
+
+  output:
+    On stderr (always):
+      # z3 status: <sat|unsat|timeout|unknown|error> (T.TT s)
+      # trace: <abs-path-to-trace>
+      [# kept tmpdir: <path>]   (only with --keep)
+
+    On stdout: whatever `lemur nla TRACE [forwarded-flags]` would emit.
+    The exit code is `lemur nla`'s exit code (so 0 normally, 2 on
+    forwarded-flag usage error). Errors before `lemur nla` runs:
+       1   benchmark not found, no trace produced (z3 status logged
+           on stderr).
+       2   argparse usage error.
+
+  performance: dominated by the z3 run. Use --timeout to bound it; the
+  wrapper itself adds ~200 ms (one extra Python interpreter for
+  `lemur nla`). For repeated analysis on the same trace, prefer:
+    lemur nla-run BENCH --keep
+    lemur nla <printed tmpdir>/default_s0.trace --strategy ...
+
+  typical session:
+    # 1. file overview at default settings
+    lemur nla-run bench.smt2
+
+    # 2. seed-N drill-down with a custom tactic, listing all lemmas
+    lemur nla-run bench.smt2 --seed 3 --timeout 60 \\
+      --tactic '(then simplify propagate-values solve-eqs smt)' \\
+      -- --list
+
+    # 3. capture once, analyze N ways
+    lemur nla-run bench.smt2 --keep
+    # (note printed tmpdir; trace lives at <tmpdir>/default_s0.trace)
+    lemur nla <tmpdir>/default_s0.trace --top-by vars --top-n 5
+    lemur nla <tmpdir>/default_s0.trace --strategy grob --details :10
+
+  related:
+    lemur nla       drill-down on an existing trace (no z3 invocation).
+    lemur nla-diff  compare two traces.
+    lemur sweep --trace nla_solver --save  bulk capture across seeds /
+                                            configs (more flexible than
+                                            nla-run for grids).
+""",
     'nla-diff': """\
 lemur nla-diff TRACE_A TRACE_B [--top N]
   why: Comparing two nla_solver traces is the core analysis when
