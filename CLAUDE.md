@@ -1,5 +1,12 @@
 # Lemur development notes
 
+## research notes
+
+Research / investigation notes at: `/Users/arie/ag/lemur-research/`
+(governed by the `better-than-fish` skill — see its `SKILL.md` for
+conventions, and `~/ag/lemur-research/CLAUDE.md` for project-specific
+triggers and code anchors).
+
 ## setup
 
 ```bash
