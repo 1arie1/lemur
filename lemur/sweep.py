@@ -240,30 +240,36 @@ def run_single(z3_bin: str, smt_file: str, seed: int, config: RunConfig,
         trace_dest = None
         if save_dir:
             save_stem = f"{split_name}.{config.name}" if split_name else config.name
-            prefix = Path(save_dir) / f"{save_stem}_s{seed}"
+            # Append the suffix instead of replacing it: Path.with_suffix
+            # treats anything after the LAST `.` as a suffix and overwrites
+            # it. With config names containing dots (or split_name's
+            # trailing `.<config>` separator), `prefix.with_suffix('.stdout')`
+            # would drop the seed and the config and silently collide
+            # across seeds.
+            prefix = str(Path(save_dir) / f"{save_stem}_s{seed}")
 
             # Trace file
             trace_src = Path(tmpdir) / '.z3-trace'
             if trace_src.exists() and trace_src.stat().st_size > 0:
-                trace_dest = prefix.with_suffix('.trace')
+                trace_dest = Path(prefix + '.trace')
                 shutil.copy2(trace_src, trace_dest)
 
             # stdout
             if stdout.strip():
-                prefix.with_suffix('.stdout').write_text(stdout)
+                Path(prefix + '.stdout').write_text(stdout)
 
             # stderr
             if stderr.strip():
-                prefix.with_suffix('.stderr').write_text(stderr)
+                Path(prefix + '.stderr').write_text(stderr)
 
             # z3 AST trace log
             z3_log_src = Path(tmpdir) / 'z3.log'
             if z3_log_src.exists() and z3_log_src.stat().st_size > 0:
-                shutil.copy2(z3_log_src, prefix.with_suffix('.z3log'))
+                shutil.copy2(z3_log_src, Path(prefix + '.z3log'))
 
             # Parsed z3 stats
             if stats_data is not None:
-                prefix.with_suffix('.stats.json').write_text(
+                Path(prefix + '.stats.json').write_text(
                     json.dumps(stats_data, indent=2))
 
         return RunResult(

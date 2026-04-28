@@ -97,7 +97,12 @@ lemur sweep BENCH.smt2 [...] | lemur sweep LEAVES_DIR/
                         first matching run, then skip its remaining runs.
                         Requires --split or directory mode. Mutually
                         exclusive with --stop-on; composes with --fail-fast.
-    --fail-fast         abort on first timeout/unknown/error.
+    --fail-fast         abort on first timeout/unknown/error. Implies
+                        --stop-on-error.
+    --stop-on-error     abort on first run with status=error (narrower
+                        than --fail-fast — leaves timeout/unknown alone).
+                        Useful when a single config typo would otherwise
+                        propagate across the whole sweep.
 
   flags (output):
     -f rich|plain|json  output format. Plain emits CSV (see schema).
@@ -113,6 +118,13 @@ lemur sweep BENCH.smt2 [...] | lemur sweep LEAVES_DIR/
     --stats             enable z3 -st; with --save writes
                         <config>_s<seed>.stats.json per run (consumed by
                         `lemur stats-compare`).
+    --no-config-check   skip the pre-flight z3 dry-run that catches
+                        malformed configs. The check fires once per
+                        config (one z3 invocation on a trivial
+                        `(set-logic QF_LIA) (assert true) (check-sat)`)
+                        and aborts the sweep if any config produces an
+                        `(error ...)`. Auto-skipped under -f plain on
+                        the assumption plain = scripted/agent use.
 
   csv schema (plain output, streamed; row-per-run as runs complete):
     columns: [split,] config, seed, status, time_s

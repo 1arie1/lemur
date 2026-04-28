@@ -24,6 +24,54 @@ def _parse_grid(spec: str) -> tuple[str, list[str]]:
     return key.strip(), values
 
 
+_CONFIG_PROBE_SMT2 = "(set-logic QF_LIA) (assert true) (check-sat)\n"
+
+
+def _validate_configs(z3_bin: str, configs: list[RunConfig]
+                      ) -> list[tuple[str, str]]:
+    """Run each config's z3 params against a trivial SMT2 input and report
+    any that produce errors. Returns a list of (config_name, error_text)
+    for failed configs; empty list if all pass.
+
+    Cheap: one z3 invocation per config. The probe input is solver-trivial
+    (one assert) so total wall is dominated by tactic-chain construction
+    if anything. A bad chain like `tactic.default_tactic=(then` errors at
+    parameter-parse time before any solving happens."""
+    import subprocess
+    import tempfile
+
+    bad: list[tuple[str, str]] = []
+    for cfg in configs:
+        if not cfg.params:
+            continue
+        cmd = [z3_bin] + [f"{k}={v}" for k, v in cfg.params.items()]
+        cmd.append("-in")
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=_CONFIG_PROBE_SMT2,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            bad.append((cfg.name, f"z3 probe timed out ({z3_bin})"))
+            continue
+        except FileNotFoundError:
+            bad.append((cfg.name, f"z3 binary not found: {z3_bin}"))
+            continue
+        # Concatenate stdout + stderr; either may carry the error message.
+        combined = (proc.stdout or '') + (proc.stderr or '')
+        if '(error' in combined:
+            err_lines = [
+                line.strip() for line in combined.splitlines()
+                if line.strip().startswith('(error')
+            ]
+            err_text = '; '.join(err_lines) or combined.strip()
+            bad.append((cfg.name, err_text))
+    return bad
+
+
 def _parse_split(spec: str) -> tuple[str, str]:
     """Parse '--split name:smt-to-inject' into (name, smt)."""
     if ':' not in spec:
@@ -85,7 +133,18 @@ def register(subparsers):
                         'Requires --split. Incompatible with --stop-on.')
     p.add_argument('--fail-fast', action='store_true',
                    help='Abort sweep on first timeout/unknown/error '
-                        '(composes with --stop-on-per-split)')
+                        '(composes with --stop-on-per-split). Implies '
+                        '--stop-on-error.')
+    p.add_argument('--stop-on-error', action='store_true',
+                   help='Abort sweep on first run with status=error '
+                        '(scoped narrower than --fail-fast, which also '
+                        'covers timeout/unknown).')
+    p.add_argument('--no-config-check', action='store_true',
+                   help='Skip the pre-flight z3 dry-run that catches malformed '
+                        'configs (a single z3 invocation per config on a '
+                        'trivial SMT2 input). Auto-skipped under -f plain '
+                        'on the assumption that plain output means scripted '
+                        '/ agent use, where config typos are unlikely.')
     p.set_defaults(func=run)
 
 
@@ -237,6 +296,23 @@ def run(args):
 
     console = make_console(no_color=args.no_color) if effective_fmt == 'rich' else None
 
+    # Pre-flight config validation. Catches typos like
+    #   --config 'D: tactic.default_tactic=(then ...)'
+    # where the unquoted parens silently truncate the param value. Cheap
+    # (one z3 call per config on a trivial SMT2 input). Skip under plain
+    # output on the assumption that plain = scripted/agent use; humans
+    # benefit most from the early-fail.
+    if not args.no_config_check and effective_fmt != 'plain':
+        bad = _validate_configs(z3_bin, configs)
+        if bad:
+            for cfg_name, msg in bad:
+                print(f"Error: config {cfg_name!r} failed pre-flight check:",
+                      file=sys.stderr)
+                print(f"  {msg}", file=sys.stderr)
+            print("Re-run with --no-config-check to bypass this check.",
+                  file=sys.stderr)
+            sys.exit(2)
+
     # Any mode that carries a `split` dimension in results: explicit --split,
     # or directory-mode leaf_files / pre_closed_splits.
     has_splits = bool(splits) or bool(leaf_files) or bool(pre_closed_splits)
@@ -278,8 +354,13 @@ def run(args):
 
     # Build the early-termination predicates.
     stop_when = None
-    if args.stop_on or args.fail_fast:
-        fail_statuses = {'timeout', 'unknown', 'error'} if args.fail_fast else set()
+    if args.stop_on or args.fail_fast or args.stop_on_error:
+        if args.fail_fast:
+            fail_statuses = {'timeout', 'unknown', 'error'}
+        elif args.stop_on_error:
+            fail_statuses = {'error'}
+        else:
+            fail_statuses = set()
         target = args.stop_on  # 'sat' | 'unsat' | None
 
         def stop_when(r):
