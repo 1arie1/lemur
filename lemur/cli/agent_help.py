@@ -111,7 +111,15 @@ lemur sweep BENCH.smt2 [...] | lemur sweep LEAVES_DIR/
                         whenever splits are present.
     --no-commands       suppress trailing copy-pasteable z3 command list.
     --no-color          disable color in rich output.
-    --save DIR          per-run files: stdout, stderr, .z3-trace, .stats.json.
+    --save DIR          per-run files written under DIR. Naming:
+                          <config>_s<seed>.{stdout,stderr,trace,z3log,
+                                            stats.json}
+                        without splits, or
+                          <split>.<config>_s<seed>.{ext}
+                        with --split or directory mode. The .trace
+                        extension is only present if --trace was set;
+                        .z3log only with --z3-log; .stats.json only with
+                        --stats.
     --trace TAGS        comma-separated trace tags (e.g. nla_solver,nra).
                         Captures .z3-trace; with --save writes per run.
     --z3-log            enable z3 AST trace log (trace=true). Requires --save.
@@ -143,9 +151,10 @@ lemur sweep BENCH.smt2 [...] | lemur sweep LEAVES_DIR/
 
   exit codes:
     0  every scheduled run completed (regardless of sat/unsat outcome).
-       --stop-on and --fail-fast truncate the sweep but the process still
-       exits 0 on a clean truncation.
-    2  argparse usage error.
+       --stop-on, --fail-fast, and --stop-on-error truncate the sweep
+       but the process still exits 0 on a clean truncation.
+    2  argparse usage error, OR a pre-flight config check failed
+       (run with --no-config-check to bypass).
     other non-zero: unhandled exception (z3 not found, save-dir
        unwritable, etc.).
 

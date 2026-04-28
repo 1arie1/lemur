@@ -113,10 +113,13 @@ def register(subparsers):
     p.add_argument('--z3-log', action='store_true',
                    help='Enable z3 AST trace log (trace=true). Requires --save.')
     p.add_argument('--save', default=None,
-                   help='Directory to save raw outputs and traces')
+                   help='Directory to save per-run artifacts. File names: '
+                        '<config>_s<seed>.{stdout,stderr,trace,z3log,stats.json} '
+                        'without splits, or <split>.<config>_s<seed>.{ext} '
+                        'with --split / directory mode.')
     p.add_argument('--stats', action='store_true',
-                   help='Enable z3 -st statistics; when combined with --save '
-                        'writes <config>_s<seed>.stats.json per run')
+                   help='Enable z3 -st statistics; with --save writes a '
+                        '.stats.json file per run (same naming as --save).')
     p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                    help='Output format (default: rich for TTY, plain otherwise)')
     p.add_argument('--no-color', action='store_true',
