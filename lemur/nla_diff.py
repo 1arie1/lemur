@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from lemur.lemma import LemmaAnalyzer, LemmaRecord
+from lemur.nra_parsers import NraCall, parse_nra_calls
 from lemur.parsers import TraceEntry, group_by_function, parse_trace
 
 
@@ -36,10 +37,16 @@ class TraceMetrics:
     strategy_counts: Counter = field(default_factory=Counter)
     patch_blocked: int = 0       # bodies containing 'blocked' AND not 'no block'
     patch_blocked_total: int = 0 # all is_patch_blocked entries
-    fingerprints: Counter = field(default_factory=Counter)
     var_counts: list = field(default_factory=list)
     precondition_counts: list = field(default_factory=list)
     monomial_counts: list = field(default_factory=list)
+    # x-form nlsat fingerprints from [nra] companion data. Empty if the
+    # trace was captured without -tr:nra. Used for the top-repeat row
+    # since j-form lemma fingerprints are unstable across nlsat
+    # invocations (j-IDs get renumbered).
+    nlsat_calls: int = 0
+    nlsat_fingerprints: Counter = field(default_factory=Counter)
+    nlsat_fp_to_call: dict = field(default_factory=dict)
 
 
 def _is_blocked_body(body: str) -> bool:
@@ -48,16 +55,15 @@ def _is_blocked_body(body: str) -> bool:
     return 'blocked' in body and 'no block' not in body
 
 
-def _fingerprint(rec: LemmaRecord) -> str:
-    """Stable, human-readable identity for a lemma. Strategy + conclusion
-    captures most of the duplicate-lemma structure that matters for
-    "did the same family fire more times" questions."""
-    concl = rec.conclusion or '<no-conclusion>'
-    return f"{rec.strategy} ==> {concl}"
+def compute_metrics(trace_path: str, *, nra_trace_path: str | None = None) -> TraceMetrics:
+    """Single-pass metrics over a .z3-trace file.
 
-
-def compute_metrics(trace_path: str) -> TraceMetrics:
-    """Single-pass metrics over a .z3-trace file."""
+    `nra_trace_path` overrides the default behavior of looking for `[nra]`
+    entries in `trace_path` itself. Pass it when nla and nra were captured
+    into separate files. If neither this nor `trace_path` contains [nra]
+    entries, x-form fingerprint stats are simply empty (top-repeat row
+    will be omitted by the renderer).
+    """
     m = TraceMetrics(path=trace_path)
     entries: list[TraceEntry] = list(parse_trace(trace_path))
     m.total_entries = len(entries)
@@ -81,10 +87,18 @@ def compute_metrics(trace_path: str) -> TraceMetrics:
     m.lemma_count = len(lemmas)
     for rec in lemmas:
         m.strategy_counts[rec.strategy or '<unknown>'] += 1
-        m.fingerprints[_fingerprint(rec)] += 1
         m.var_counts.append(len(rec.variables))
         m.precondition_counts.append(len(rec.preconditions))
         m.monomial_counts.append(len(rec.monomials))
+
+    # x-form fingerprints from [nra] entries — same trace file by default,
+    # or a separately-captured nra trace via `nra_trace_path`.
+    nra_source = nra_trace_path if nra_trace_path else trace_path
+    nra_calls = parse_nra_calls(nra_source)
+    m.nlsat_calls = len(nra_calls)
+    for c in nra_calls:
+        m.nlsat_fingerprints[c.fingerprint] += 1
+        m.nlsat_fp_to_call.setdefault(c.fingerprint, c)
 
     return m
 
@@ -169,19 +183,49 @@ def diff(a: TraceMetrics, b: TraceMetrics, *, top: int = 5) -> list[Row]:
         ca, cb = a.strategy_counts.get(s, 0), b.strategy_counts.get(s, 0)
         rows.append(Row(f"strategy: {s}", ca, cb, _fmt_count_delta(ca, cb)))
 
-    # Top fingerprints — use A's top-N as the ordering, surface B's count
-    # at the same fingerprint. Annotate "stable" when the fingerprint is
-    # also in B's top-N at the same rank.
-    a_top = a.fingerprints.most_common(top)
-    b_top_ranks = {fp: i for i, (fp, _) in enumerate(b.fingerprints.most_common(top))}
-    for i, (fp, a_n) in enumerate(a_top):
-        b_n = b.fingerprints.get(fp, 0)
-        same_rank = i in b_top_ranks.values() and b_top_ranks.get(fp) == i
-        note = '  (stable rank)' if same_rank else ''
-        # Truncate long conclusions for display readability.
-        label = fp if len(fp) <= 60 else fp[:57] + '...'
-        rows.append(Row(f"top-fp({i+1}): {label}{note}",
-                        a_n, b_n, _fmt_count_delta(a_n, b_n)))
+    # x-form nlsat-call repeats. Replaces an earlier j-form lemma
+    # fingerprint that conflated different nlsat invocations because j-IDs
+    # get renumbered between calls (10-100x bogus inflation).
+    if a.nlsat_calls or b.nlsat_calls:
+        rows.append(Row("nlsat calls (x-form)", a.nlsat_calls, b.nlsat_calls,
+                        _fmt_count_delta(a.nlsat_calls, b.nlsat_calls)))
+        # Surface fingerprints with >=2 occurrences on EITHER side, ranked
+        # by max(A, B). Reverse-stable on fingerprint string for
+        # deterministic ordering when counts tie.
+        union_fps = set(a.nlsat_fingerprints) | set(b.nlsat_fingerprints)
+        candidates = sorted(
+            (
+                (fp, a.nlsat_fingerprints.get(fp, 0),
+                 b.nlsat_fingerprints.get(fp, 0))
+                for fp in union_fps
+            ),
+            key=lambda t: (-max(t[1], t[2]), t[0]),
+        )
+        shown = 0
+        for fp, a_n, b_n in candidates:
+            if shown >= top:
+                break
+            if max(a_n, b_n) < 2:
+                continue
+            call = a.nlsat_fp_to_call.get(fp) or b.nlsat_fp_to_call.get(fp)
+            size = call.size if call else '?'
+            n_vars = len(call.variables) if call else '?'
+            shown += 1
+            rows.append(Row(
+                f"top-nlsat-fp({shown}): size={size} nvars={n_vars} "
+                f"fp={fp[:8]}",
+                a_n, b_n, _fmt_count_delta(a_n, b_n)))
+        if shown == 0:
+            rows.append(Row(
+                "top-nlsat-fp", "—", "—",
+                "no repeated nlsat constraint set on either side",
+            ))
+    else:
+        rows.append(Row(
+            "nlsat calls (x-form)", "n/a", "n/a",
+            "neither trace had -tr:nra; pass --nra-a/--nra-b or "
+            "re-capture with `-tr:nra`",
+        ))
 
     return rows
 

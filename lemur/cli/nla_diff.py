@@ -18,6 +18,12 @@ def register(subparsers):
     agent_help.add_agent_flag(p, 'nla-diff')
     p.add_argument('a', help='First .z3-trace file (A)')
     p.add_argument('b', help='Second .z3-trace file (B)')
+    p.add_argument('--nra-a', default=None, metavar='PATH',
+                   help='Optional separate -tr:nra trace for A (default: '
+                        'look for [nra] entries inside A itself). Used for '
+                        'stable x-form nlsat-call fingerprints.')
+    p.add_argument('--nra-b', default=None, metavar='PATH',
+                   help='Optional separate -tr:nra trace for B.')
     p.add_argument('--top', type=int, default=5, metavar='N',
                    help='Show top N strategies / functions / fingerprints '
                         '(default: 5).')
@@ -37,8 +43,10 @@ def run(args):
             sys.exit(1)
 
     try:
-        m_a = nla_diff.compute_metrics(str(a_path))
-        m_b = nla_diff.compute_metrics(str(b_path))
+        m_a = nla_diff.compute_metrics(str(a_path),
+                                        nra_trace_path=args.nra_a)
+        m_b = nla_diff.compute_metrics(str(b_path),
+                                        nra_trace_path=args.nra_b)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

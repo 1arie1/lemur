@@ -336,12 +336,12 @@ lemur nla-run BENCH.smt2 [--seed N] [--timeout T] [--tactic '...']
                                             nla-run for grids).
 """,
     'nla-diff': """\
-lemur nla-diff TRACE_A TRACE_B [--top N]
+lemur nla-diff TRACE_A TRACE_B [--top N] [--nra-a PATH] [--nra-b PATH]
   why: Comparing two nla_solver traces is the core analysis when
        investigating "why does seed N close in 4 s and seed M time out?"
        on a Certora QF_NIA benchmark. The headline numbers (total
        nla_solver entries, lemma counts, function-call distribution,
-       is_patch_blocked rate, top-fingerprint stability) come out as a
+       is_patch_blocked rate, x-form nlsat-call repeats) come out as a
        single delta table instead of a hand-built awk pipeline.
 
   decide:
@@ -370,11 +370,22 @@ lemur nla-diff TRACE_A TRACE_B [--top N]
                                        a `±Npp` percentage-point delta.
     strategy: <name>                  top --top by lemma count, union of
                                        A and B's strategies.
-    top-fp(i): <strategy ==> concl>   top --top fingerprints in A,
-                                       paired with B's count for the same
-                                       fingerprint. `(stable rank)` if it
-                                       appears at the SAME rank in B's
-                                       top --top.
+    nlsat calls (x-form)              total count of nlsat invocations
+                                       parsed from the [nra] companion
+                                       data on each side. `n/a` if neither
+                                       trace had -tr:nra captured.
+    top-nlsat-fp(i): size=K nvars=V   x-form nlsat-call repeats. Surfaces
+        fp=<sha-prefix>                up to --top fingerprints with
+                                       count>=2 on EITHER side, ranked
+                                       by max(A, B). The fingerprint is
+                                       a sha-12 hash of the sorted
+                                       constraint pool; `size` is the
+                                       constraint count, `nvars` the
+                                       distinct x-vars referenced.
+                                       Replaces an older j-form
+                                       fingerprint that produced bogus
+                                       inflation due to j-ID renumbering
+                                       across nlsat invocations.
 
   count delta format:
     +N (+P%)   when A > 0    e.g. `+200 (+312%)`
@@ -384,6 +395,9 @@ lemur nla-diff TRACE_A TRACE_B [--top N]
 
   flags:
     --top N             surface top N entries per category. Default 5.
+    --nra-a PATH        optional separately-captured -tr:nra trace for A.
+                        Default: look for [nra] entries inside TRACE_A.
+    --nra-b PATH        same for B.
     --format plain|json  see "json schema" below.
 
   json schema:
