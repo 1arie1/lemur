@@ -1,0 +1,22 @@
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@20 conflict
+ (<= (+ (if BLK__65_x 1 2) (* -1 #1)) -1) l_true
+1: j1 - j2 <= -1
+------------------------------------------------
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@21 conflict
+ (>= (if BLK__99_y 5 6) 6) l_true
+1: j5 >= 6
+------------------------------------------------
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@22 conflict
+ (>= (if BLK__99_y 5 6) 5) l_true
+ (>= (mod #2 115792089237316195423570985008687907853269984665640564039457584007913129639936) 0) l_true
+1: j6 >= 5
+------------------------------------------------
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@23 conflict
+ (>= (if BLK__99_y 5 6) 5) l_true
+ (>= (mod #2 115792089237316195423570985008687907853269984665640564039457584007913129639936) 0) l_true
+1: j7 >= 5
+------------------------------------------------

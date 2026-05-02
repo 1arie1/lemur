@@ -1,0 +1,16 @@
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@10 conflict
+ (<= (+ (if BLK__65_x 1 2) (* -1 #1)) -1) l_true
+1: j1 - j2 <= -1
+------------------------------------------------
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@11 conflict
+ (>= (if BLK__65_x 1 2) 2) l_true
+ (>= (mod #2 18446744073709551616) 0) l_true
+1: j2 >= 0
+------------------------------------------------
+-------- [arith_conflict] set_conflict_or_lemma /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:3621 ---------
+@12 conflict
+ (<= (+ x y) 0) l_true
+1: j3 + j4 <= 0
+------------------------------------------------

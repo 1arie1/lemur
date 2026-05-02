@@ -9,6 +9,7 @@ from lemur.cli import sgrep as sgrep_cli
 from lemur.cli import sdiff as sdiff_cli
 from lemur.cli import nla_diff as nla_diff_cli
 from lemur.cli import nla_run as nla_run_cli
+from lemur.cli import stats_diff as stats_diff_cli
 from lemur.cli import agent_help
 
 
@@ -34,6 +35,7 @@ def main():
     sdiff_cli.register(sub)
     nla_diff_cli.register(sub)
     nla_run_cli.register(sub)
+    stats_diff_cli.register(sub)
 
     args, remaining = parser.parse_known_args()
 

@@ -204,6 +204,45 @@ lemur tally SWEEP.csv
        closure summary.
   -f plain|rich|json
 """,
+    'stats-diff': """\
+lemur stats-diff TRACE_A TRACE_B [--top-k N]
+  why: side-by-side arith_conflict comparison between two traces — the
+       baseline-vs-variant question that single-trace `lemur stats
+       --tag arith_conflict` couldn't answer. Renders the four
+       subsections (summary, hot blocks, top constants, premise shapes)
+       with A / B / delta columns. Useful for "did this encoder rewrite
+       shift conflict mass off BLK__65?" or "did variant B add new
+       big-int constants?"
+
+  inputs:
+    TRACE_A, TRACE_B   .z3-trace files. Each must contain at least one
+                       [arith_conflict] entry (errors with a clear
+                       message otherwise).
+
+  delta formats:
+    counts       +N (+P%) when A>0; +N when A==0; = when equal; -N (-P%)
+                 when B<A.
+    percentages  premise-shape histogram uses `±Npp` (percentage points)
+                 since absolute counts vary with total premise rows.
+
+  flags:
+    --top-k N    cap rows in ranked subsections (hot blocks, top
+                 constants); default 5. Premise-shape histogram is
+                 always 4 rows (clean_linear / ite_wrapped /
+                 mod_div_wrapped / mixed).
+    -f rich|plain|json   default rich for TTY, plain otherwise. JSON
+                 schema mirrors the subsection structure: top-level
+                 a/b/a_total/b_total + a `subsections` list of
+                 {label, rows[{key, a, b, delta}]}.
+
+  ranking rules:
+    hot blocks       union of A's top-K and B's top-K, then sorted by
+                     max(A_count, B_count) desc, then key for stable
+                     tiebreak. Surfaces blocks that grew on either
+                     side, not just A's hotlist.
+    top constants    same union-then-max ordering.
+    premise shapes   fixed 4-row order (clean / ite / mod_div / mixed).
+""",
     'stats-compare': """\
 lemur stats-compare SAVE_DIR
 lemur stats-compare RUN.out [RUN.out ...] [--label NAME=GLOB]
