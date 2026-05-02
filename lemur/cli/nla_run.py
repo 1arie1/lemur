@@ -71,6 +71,14 @@ def run(args):
         print(f"Error: benchmark not found: {bench}", file=sys.stderr)
         sys.exit(1)
 
+    # `--x-form` (varmap source) works from `-tr:nla_solver` alone; only
+    # the older `--x-form-source nra` path needs the expensive [nra] tag.
+    trace_tags = ['nla_solver']
+    if '--x-form-source' in nla_extra:
+        idx = nla_extra.index('--x-form-source')
+        if idx + 1 < len(nla_extra) and nla_extra[idx + 1] == 'nra':
+            trace_tags.append('nra')
+
     # Defer the heavy import until we know we're going to run.
     from lemur import sweep as sweep_mod
 
@@ -97,7 +105,7 @@ def run(args):
             seed=args.seed,
             config=cfg,
             timeout=args.timeout,
-            trace_tags=['nla_solver'],
+            trace_tags=trace_tags,
             save_dir=tmpdir,
             stats=False,
         )

@@ -1,0 +1,48 @@
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+propagate value - lower bound of range is above value 1
+(81) j16 >= 1
+(193) j21 >= 1
+ ==> j26 >= 1
+j21 =   3112          [1, oo]
+root=j21
+j16 =  16384          [1, 70368744161280]
+root=j16
+j26 := j16 * j21
+j26 =      0          [-oo, oo]
+root=j26
+------------------------------------------------
+-------- [nla_solver] false_case_of_check_nla /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:2143 ---------
+varmap: j21=67: R195 j16=54: R188 j26=87: (* R188 R195)
+------------------------------------------------
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+propagate value - lower bound of range is above value 2
+(81) j16 >= 1
+(209) j82 >= 1
+ ==> j87 >= 1
+j16 =  16384          [1, 70368744161280]
+root=j16
+j82 =      1  base    [1, oo]
+root=j82
+j87 := j16 * j82
+j87 =      0          [-oo, oo]
+root=j87
+------------------------------------------------
+-------- [nla_solver] false_case_of_check_nla /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:2143 ---------
+varmap: j16=54: R188 j82=236: (div I176 R188) j87=352: (* R188 (div I176 R188))
+------------------------------------------------
+-------- [nla_solver] ~lemma_builder /Users/arie/ag/z3/z3-edge/src/math/lp/nla_core.cpp:870 ---------
+propagate value - lower bound of range is above value 3
+(81) j16 >= 1
+(193) j21 >= 1
+ ==> j26 >= 1
+j21 =   3112          [1, oo]
+root=j21
+j16 =  16384          [1, 70368744161280]
+root=j16
+j26 := j16 * j21
+j26 =      0          [-oo, oo]
+root=j26
+------------------------------------------------
+-------- [nla_solver] false_case_of_check_nla /Users/arie/ag/z3/z3-edge/src/smt/theory_lra.cpp:2143 ---------
+varmap: j21=67: R195 j16=54: R188 j26=87: (* R188 R195)
+------------------------------------------------

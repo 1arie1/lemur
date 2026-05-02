@@ -189,19 +189,24 @@ def _format_vars(vars_: tuple[str, ...], cap: int = 8) -> str:
     return '[' + ','.join(vars_[:cap]) + f',...] (+{len(vars_) - cap})'
 
 
-def render_xform_plain(report: XFormReport) -> str:
+def render_xform_plain(report: XFormReport, *, unit_label: str = 'nlsat calls') -> str:
     if report.total == 0:
-        return "(no [nra] check entries with constraint pools in trace)\n"
+        return f"(no {unit_label} found in trace)\n"
 
     pct_unique = (100.0 * report.unique_fingerprints / report.total)
+    label_w = max(len(unit_label) + 1, len("unique fingerprints:"))
     lines = [
-        f"nlsat calls:         {report.total}",
-        f"unique fingerprints: {report.unique_fingerprints}  ({pct_unique:.1f}%)",
+        f"{unit_label + ':':<{label_w}}  {report.total}",
+        f"{'unique fingerprints:':<{label_w}}  {report.unique_fingerprints}  ({pct_unique:.1f}%)",
     ]
 
-    if report.result_counts:
-        rc = ' '.join(f"{r}={n}" for r, n in report.result_counts.most_common())
-        lines.append(f"results:             {rc}")
+    # Suppress the results row when there's only a synthetic '<none>' entry —
+    # the varmap path can't observe nlsat verdicts.
+    real_results = {r: n for r, n in report.result_counts.items() if r != '<none>'}
+    if real_results:
+        rc = ' '.join(f"{r}={n}" for r, n in
+                      sorted(real_results.items(), key=lambda kv: -kv[1]))
+        lines.append(f"{'results:':<{label_w}}  {rc}")
 
     if report.repeats:
         lines.append("")
@@ -224,25 +229,27 @@ def render_xform_plain(report: XFormReport) -> str:
     return '\n'.join(lines) + '\n'
 
 
-def render_xform_rich(report: XFormReport, console) -> None:
+def render_xform_rich(report: XFormReport, console, *,
+                       unit_label: str = 'nlsat calls') -> None:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
     if report.total == 0:
-        console.print("[yellow](no [nra] check entries with constraint "
-                      "pools in trace)[/yellow]")
+        console.print(f"[yellow](no {unit_label} found in trace)[/yellow]")
         return
 
     pct_unique = 100.0 * report.unique_fingerprints / report.total
     overview = Table(show_header=False, box=None, pad_edge=False, padding=(0, 2))
     overview.add_column("Key", style="bold")
     overview.add_column("Value")
-    overview.add_row("nlsat calls", str(report.total))
+    overview.add_row(unit_label, str(report.total))
     overview.add_row("unique fingerprints",
                      f"{report.unique_fingerprints}  ({pct_unique:.1f}%)")
-    if report.result_counts:
-        rc = ' '.join(f"{r}={n}" for r, n in report.result_counts.most_common())
+    real_results = {r: n for r, n in report.result_counts.items() if r != '<none>'}
+    if real_results:
+        rc = ' '.join(f"{r}={n}" for r, n in
+                      sorted(real_results.items(), key=lambda kv: -kv[1]))
         overview.add_row("results", rc)
     if report.size_min is not None:
         overview.add_row("constraint-set size",

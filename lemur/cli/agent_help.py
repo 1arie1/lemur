@@ -409,20 +409,22 @@ lemur nla-diff TRACE_A TRACE_B [--top N] [--nra-a PATH] [--nra-b PATH]
                                        a `±Npp` percentage-point delta.
     strategy: <name>                  top --top by lemma count, union of
                                        A and B's strategies.
-    nlsat calls (x-form)              total count of nlsat invocations
-                                       parsed from the [nra] companion
-                                       data on each side. `n/a` if neither
-                                       trace had -tr:nra captured.
-    top-nlsat-fp(i): size=K nvars=V   x-form nlsat-call repeats. Surfaces
-        fp=<sha-prefix>                up to --top fingerprints with
-                                       count>=2 on EITHER side, ranked
-                                       by max(A, B). The fingerprint is
-                                       a sha-12 hash of the sorted
-                                       constraint pool; `size` is the
-                                       constraint count, `nvars` the
-                                       distinct x-vars referenced.
+    lemmas (varmap-resolved) /        total fingerprintable units on each
+        nlsat calls (nra)             side. Label depends on the source
+                                       picked by `compute_metrics`'s auto
+                                       fallback: varmap (default; cheap;
+                                       counts lemmas) or nra (only if no
+                                       varmap data; counts nlsat
+                                       invocations). `n/a` if neither.
+    top-fp(i): size=K nvars=V         x-form fingerprint repeats with
+        fp=<sha-prefix>                count>=2 on EITHER side, ranked
+                                       by max(A, B). Fingerprint is a
+                                       sha-12 hash of the sorted resolved
+                                       expression set; `size` is its
+                                       cardinality, `nvars` the distinct
+                                       R/I (or x*) variables referenced.
                                        Replaces an older j-form
-                                       fingerprint that produced bogus
+                                       fingerprint that produced 10-100x
                                        inflation due to j-ID renumbering
                                        across nlsat invocations.
 
@@ -497,19 +499,37 @@ lemur nla TRACE
     --details RANGE          multiple details. RANGE syntax is Python-
                              slice-like: `3` (single) | `5:10` | `2-4` |
                              `:5` (head) | `12:` (tail).
-    --x-form                 stable nlsat-call fingerprints from the
-                             [nra] constraint pool. Reports total calls,
-                             unique-fingerprint count, top repeats with
-                             constraint-set size and x-var list, and the
-                             min/median/max session-size distribution.
-                             Settles "is nlsat re-asked the same
-                             question?" — repeats by j-form output are
-                             bogus due to j-renumbering across nlsat
-                             invocations. Capture the trace with
-                             `-tr:nla_solver -tr:nra` (single file works);
-                             or pass --nra-trace PATH for a separately-
-                             captured nra trace. --top N caps repeat
-                             rows (default 10).
+    --x-form                 stable nlsat-related fingerprints. Reports
+                             total fingerprintable units, unique-
+                             fingerprint count, top repeats with size +
+                             variable list, and size distribution. Two
+                             sources, picked via --x-form-source:
+
+                             varmap (default; --x-form-source auto/varmap):
+                                Per-lemma varmap snapshot from
+                                `-tr:nla_solver`. One unit = one lemma
+                                (~lemma_builder emission). j-vars are
+                                resolved through the lemma's own varmap to
+                                stable R/I IDs (z3 enode IDs, not
+                                recycled). No extra capture cost. Detects
+                                duplicate lemma emissions — e.g. "lemma
+                                X fired 24 times" on a stuck QF_NIA target.
+
+                             nra (--x-form-source nra):
+                                `[nra] check` constraint pool from
+                                `-tr:nra`. One unit = one nlsat
+                                invocation. Stable but EXPENSIVE: ~8x
+                                trace size on hard benchmarks. Detects
+                                duplicate nlsat questions (the
+                                constraint set passed in). Use only when
+                                you specifically want call-level rather
+                                than lemma-level repeat detection.
+
+                             --x-form-source auto picks varmap when
+                             ~lemma_builder + paired varmap entries are
+                             present; falls back to nra. --top N caps
+                             repeat rows (default 10). --nra-trace PATH
+                             points at a separately-captured nra trace.
 
   filters (compose with AND; renumbering after filtering is 1-based):
     --strategy SUB        keep lemmas whose strategy contains SUB,

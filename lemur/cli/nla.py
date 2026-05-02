@@ -46,10 +46,21 @@ def register(subparsers):
                            'Reads [nra] entries from the same trace, or '
                            'from --nra-trace PATH if separately captured.')
 
+    p.add_argument('--x-form-source', choices=['auto', 'varmap', 'nra'],
+                   default='auto',
+                   help='Which trace data backs --x-form fingerprints. '
+                        '`varmap` (preferred): per-lemma varmap snapshot from '
+                        '-tr:nla_solver alone — no extra capture cost. '
+                        '`nra`: x* notation from -tr:nra blocks. NOTE that '
+                        '-tr:nra blows up the trace ~8x (15MB → 125MB on '
+                        'a 30s timeout). `auto` picks varmap when '
+                        '~lemma_builder + varmap entries are present, else '
+                        'falls back to nra. Default: auto.')
     p.add_argument('--nra-trace', default=None, metavar='PATH',
-                   help='Optional path to a separately-captured -tr:nra '
-                        'trace, used by --x-form. If unset and --x-form is '
-                        'requested, [nra] entries must be in TRACE.')
+                   help='Path to a separately-captured -tr:nra trace; only '
+                        'consulted when --x-form-source is `nra` (or `auto` '
+                        'falls back). If unset and the nra path is taken, '
+                        '[nra] entries must be in TRACE.')
     p.add_argument('--top', type=int, default=10, metavar='N',
                    help='Cap top-repeat rows in --x-form mode (default 10)')
 
@@ -168,40 +179,72 @@ def run(args):
 
 
 def _run_xform(args, trace_path: Path) -> None:
-    """--x-form mode: parse [nra] constraint pools, report fingerprint stats."""
+    """--x-form mode: stable nlsat-call fingerprints. Default source is
+    per-lemma varmap snapshots (no extra capture); --x-form-source nra
+    selects the older [nra]-block path which costs ~8x in trace size."""
+    from lemur.lemma_xform import parse_xform_calls
     from lemur.nra_parsers import (
-        parse_nra_calls, build_xform_report,
-        render_xform_plain, render_xform_rich, render_xform_json,
+        build_xform_report, render_xform_plain, render_xform_rich,
+        render_xform_json,
     )
 
-    nra_source = Path(args.nra_trace) if args.nra_trace else trace_path
-    if not nra_source.exists():
-        print(f"Error: nra trace not found: {nra_source}", file=sys.stderr)
+    if args.x_form_source == 'nra':
+        nra_source = Path(args.nra_trace) if args.nra_trace else trace_path
+        if not nra_source.exists():
+            print(f"Error: nra trace not found: {nra_source}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        calls, source = parse_xform_calls(
+            str(trace_path),
+            prefer=args.x_form_source,
+            nra_trace_path=args.nra_trace,
+        )
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    calls = parse_nra_calls(nra_source)
     if not calls:
-        if args.nra_trace:
-            print(f"No [nra] check entries with constraint pools in "
-                  f"{nra_source}.", file=sys.stderr)
-        else:
-            print(f"No [nra] check entries in {nra_source}. Capture with "
-                  f"`-tr:nra` alongside `-tr:nla_solver`, or pass a "
-                  f"separately-captured trace via --nra-trace.",
-                  file=sys.stderr)
+        print(
+            f"No x-form fingerprintable nlsat calls in {trace_path}.\n"
+            f"  - varmap path needs `~lemma_builder` + paired "
+            f"`false_case_of_check_nla` entries (default `-tr:nla_solver` "
+            f"output).\n"
+            f"  - nra path needs `[nra] check` constraint pools "
+            f"(`-tr:nra`; ~8x trace size).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     report = build_xform_report(calls, top=args.top)
+    if source == 'varmap':
+        unit_label = 'lemmas (~lemma_builder)'
+        provenance = (
+            "varmap-resolved (R/I-form lemma signatures, from "
+            "-tr:nla_solver). One unit = one lemma emission."
+        )
+    else:
+        unit_label = 'nlsat calls'
+        provenance = (
+            "nra constraint pool (x*-form, from -tr:nra). One unit = one "
+            "nlsat invocation. Trace cost: ~8x larger than -tr:nla_solver."
+        )
 
     fmt = args.format
     if fmt == 'json':
-        print(render_xform_json(report))
+        import json as _json
+        body = _json.loads(render_xform_json(report))
+        body['source'] = source
+        body['unit'] = unit_label
+        print(_json.dumps(body, indent=2))
         return
     if fmt == 'rich' or (fmt is None and sys.stdout.isatty()):
         console = make_console(no_color=args.no_color)
-        render_xform_rich(report, console)
+        render_xform_rich(report, console, unit_label=unit_label)
+        console.print(f"[dim]source: {provenance}[/dim]")
         return
-    sys.stdout.write(render_xform_plain(report))
+    sys.stdout.write(render_xform_plain(report, unit_label=unit_label))
+    sys.stdout.write(f"source: {provenance}\n")
 
 
 def _render_list(lemma_records, fmt, console, varmap):

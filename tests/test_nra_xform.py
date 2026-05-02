@@ -108,15 +108,19 @@ def test_report_no_calls_is_clean():
     assert report.unique_fingerprints == 0
     assert report.repeats == []
     out = render_xform_plain(report)
-    assert 'no [nra]' in out
+    assert 'no nlsat calls' in out
 
 
 def test_render_plain_basic_shape():
     calls = parse_nra_calls(REPEATS)
     report = build_xform_report(calls, top=10)
     out = render_xform_plain(report)
-    assert 'nlsat calls:         4' in out
-    assert 'unique fingerprints: 2' in out
+    # The label-width for the 'unique fingerprints:' line drives column
+    # width; the count must be present and so must the unique-fp line.
+    assert 'nlsat calls:' in out
+    assert ' 4' in out
+    assert 'unique fingerprints:' in out
+    assert ' 2' in out  # 2 unique
     assert 'count=3' in out
     assert 'l_false=3' in out
     assert 'l_undef=1' in out

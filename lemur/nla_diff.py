@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from lemur.lemma import LemmaAnalyzer, LemmaRecord
-from lemur.nra_parsers import NraCall, parse_nra_calls
+from lemur.lemma_xform import parse_xform_calls
+from lemur.nra_parsers import NraCall
 from lemur.parsers import TraceEntry, group_by_function, parse_trace
 
 
@@ -40,13 +41,15 @@ class TraceMetrics:
     var_counts: list = field(default_factory=list)
     precondition_counts: list = field(default_factory=list)
     monomial_counts: list = field(default_factory=list)
-    # x-form nlsat fingerprints from [nra] companion data. Empty if the
-    # trace was captured without -tr:nra. Used for the top-repeat row
-    # since j-form lemma fingerprints are unstable across nlsat
-    # invocations (j-IDs get renumbered).
+    # x-form fingerprints. Source can be 'varmap' (R/I-form lemma signatures
+    # from -tr:nla_solver, default — no extra capture cost) or 'nra' (x*-form
+    # constraint pools from -tr:nra, ~8x trace size). Both produce stable
+    # fingerprints, but they count different units — varmap counts lemmas,
+    # nra counts nlsat invocations.
     nlsat_calls: int = 0
     nlsat_fingerprints: Counter = field(default_factory=Counter)
     nlsat_fp_to_call: dict = field(default_factory=dict)
+    xform_source: str | None = None  # 'varmap' / 'nra' / None (no data)
 
 
 def _is_blocked_body(body: str) -> bool:
@@ -91,12 +94,19 @@ def compute_metrics(trace_path: str, *, nra_trace_path: str | None = None) -> Tr
         m.precondition_counts.append(len(rec.preconditions))
         m.monomial_counts.append(len(rec.monomials))
 
-    # x-form fingerprints from [nra] entries — same trace file by default,
-    # or a separately-captured nra trace via `nra_trace_path`.
-    nra_source = nra_trace_path if nra_trace_path else trace_path
-    nra_calls = parse_nra_calls(nra_source)
-    m.nlsat_calls = len(nra_calls)
-    for c in nra_calls:
+    # x-form fingerprints. Default: per-lemma varmap snapshots from this
+    # trace (no extra capture). Falls back to [nra] data — same file, or
+    # `nra_trace_path` if separately captured.
+    try:
+        xcalls, xsource = parse_xform_calls(
+            trace_path, prefer='auto', nra_trace_path=nra_trace_path,
+        )
+    except FileNotFoundError:
+        xcalls, xsource = [], None
+    if xcalls:
+        m.xform_source = xsource
+    m.nlsat_calls = len(xcalls)
+    for c in xcalls:
         m.nlsat_fingerprints[c.fingerprint] += 1
         m.nlsat_fp_to_call.setdefault(c.fingerprint, c)
 
@@ -187,7 +197,17 @@ def diff(a: TraceMetrics, b: TraceMetrics, *, top: int = 5) -> list[Row]:
     # fingerprint that conflated different nlsat invocations because j-IDs
     # get renumbered between calls (10-100x bogus inflation).
     if a.nlsat_calls or b.nlsat_calls:
-        rows.append(Row("nlsat calls (x-form)", a.nlsat_calls, b.nlsat_calls,
+        # Pick a label that matches what the source actually counts.
+        sources = {a.xform_source, b.xform_source} - {None}
+        if sources == {'varmap'}:
+            unit_label = "lemmas (varmap-resolved)"
+        elif sources == {'nra'}:
+            unit_label = "nlsat calls (nra)"
+        elif sources:  # mixed
+            unit_label = f"x-form units ({', '.join(sorted(sources))})"
+        else:
+            unit_label = "x-form units"
+        rows.append(Row(unit_label, a.nlsat_calls, b.nlsat_calls,
                         _fmt_count_delta(a.nlsat_calls, b.nlsat_calls)))
         # Surface fingerprints with >=2 occurrences on EITHER side, ranked
         # by max(A, B). Reverse-stable on fingerprint string for
@@ -212,19 +232,18 @@ def diff(a: TraceMetrics, b: TraceMetrics, *, top: int = 5) -> list[Row]:
             n_vars = len(call.variables) if call else '?'
             shown += 1
             rows.append(Row(
-                f"top-nlsat-fp({shown}): size={size} nvars={n_vars} "
-                f"fp={fp[:8]}",
+                f"top-fp({shown}): size={size} nvars={n_vars} fp={fp[:8]}",
                 a_n, b_n, _fmt_count_delta(a_n, b_n)))
         if shown == 0:
             rows.append(Row(
-                "top-nlsat-fp", "—", "—",
-                "no repeated nlsat constraint set on either side",
+                "top-fp", "—", "—",
+                "no repeated x-form fingerprint on either side",
             ))
     else:
         rows.append(Row(
-            "nlsat calls (x-form)", "n/a", "n/a",
-            "neither trace had -tr:nra; pass --nra-a/--nra-b or "
-            "re-capture with `-tr:nra`",
+            "x-form units", "n/a", "n/a",
+            "neither trace had `~lemma_builder` + varmap pairs nor [nra] "
+            "blocks; capture with `-tr:nla_solver` for the cheap path",
         ))
 
     return rows
