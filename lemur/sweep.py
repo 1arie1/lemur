@@ -84,30 +84,7 @@ class StopAction(enum.Enum):
     PER_SPLIT = 'per_split'  # prune just this split's remaining work
 
 
-_STATS_BLOCK_RE = re.compile(r'\(\s*(:[\s\S]+?)\)\s*\Z')
-_STATS_KV_RE = re.compile(r':([\w\-.]+)\s+(\S+)')
-
-
-def parse_z3_stats(stdout: str) -> dict | None:
-    """Extract z3 `-st` statistics block from stdout.
-
-    z3 appends a trailing S-expression like `(:key value :key value ...)`.
-    Returns a dict keyed by stat name (numbers parsed to int/float).
-    """
-    m = _STATS_BLOCK_RE.search(stdout)
-    if not m:
-        return None
-    stats: dict = {}
-    for match in _STATS_KV_RE.finditer(m.group(1)):
-        key, val = match.group(1), match.group(2)
-        try:
-            stats[key] = int(val)
-        except ValueError:
-            try:
-                stats[key] = float(val)
-            except ValueError:
-                stats[key] = val
-    return stats or None
+from lemur.z3_stats import parse_z3_stats  # noqa: F401  (re-export)
 
 
 # Temp dirs created by in-flight runs, cleaned up on normal or abnormal exit.

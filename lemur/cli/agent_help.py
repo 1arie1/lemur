@@ -206,13 +206,29 @@ lemur tally SWEEP.csv
 """,
     'stats-compare': """\
 lemur stats-compare SAVE_DIR
+lemur stats-compare RUN.out [RUN.out ...] [--label NAME=GLOB]
   why: z3 -st output is an S-expression (`(:key value ...)`). this
        subcommand parses it into typed numeric dicts and shows per-config
        means side by side, with a diff % column when exactly two configs.
        "nra-calls 139 vs 22" at a glance, not via jq+awk.
-  reads <config>_s<seed>.stats.json from `sweep --stats --save`.
-  --top N   cap rows to N highest-magnitude stats
+
+  two input modes (auto-detected on the positional arg):
+    sweep dir   one positional that's a dir of <config>_s<seed>.stats.json
+                files (from `sweep --stats --save`).
+    raw files   one or more positional files containing raw z3 -st stdout
+                (a result line followed by the trailing stats S-expr). Each
+                file's basename-stem becomes its config label. Use this
+                when iterating manually on differently-encoded variants.
+
+  --label NAME=GLOB   raw mode only; group multiple files under one label
+                      (repeatable). GLOB is a literal path or shell glob.
+                      Example: --label A='runs-A-s*.out' --label B=runs-B.out
+  --top N             cap rows to N highest-magnitude stats
   -f plain|rich|json
+
+  output: a "result" header row (sat / unsat / unknown per config) shows
+  whenever inputs are raw files; below it the numeric stats sorted by
+  largest magnitude (rich) or alphabetically (csv/json).
 """,
     'stats': """\
 lemur stats TRACE
