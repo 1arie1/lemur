@@ -18,6 +18,10 @@ def register(subparsers):
                    help='Filter to specific tag(s). Repeatable.')
     p.add_argument('--function', '--fn', action='append', default=None,
                    help='Filter to specific function(s). Repeatable.')
+    p.add_argument('--top-k', type=int, default=5, metavar='N',
+                   help='How many entries to show per ranked subsection '
+                        '(currently used by arith_conflict hot-block / '
+                        'top-constant lists; default 5)')
     p.add_argument('--format', '-f', choices=['rich', 'plain', 'json'], default=None,
                    help='Output format (default: rich for TTY, plain otherwise)')
     p.add_argument('--no-color', action='store_true',
@@ -33,6 +37,7 @@ def run(args):
 
     stats_out = build_stats_output(
         trace_path, tags=args.tag, functions=args.function,
+        top_k=args.top_k,
     )
 
     fmt = args.format

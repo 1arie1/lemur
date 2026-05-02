@@ -220,7 +220,26 @@ lemur stats TRACE
        counts are of actual trace entries, not line occurrences.
   --tag TAG     filter to tag(s); repeatable
   --fn FUNC     filter to function(s); repeatable
+  --top-k N     entries per ranked subsection (used by arith_conflict;
+                default 5)
   -f plain for parsing.
+
+  per-tag analyzers (specialized; others fall back to a generic count):
+    nla_solver       function frequency, check-call max, lemma count,
+                     monomials-to-refine min/avg/max
+    nra              nra-result histogram (sat/unsat/...), constraint count
+    arith_conflict   four subsections — summary (conflicts, distinct
+                     blocks, distinct big-int constants, premise rows);
+                     hot blocks (top-K BLK__ full names by # conflicts
+                     containing the block — pasteable into
+                     `lemur split --split-only`); top constants (top-K
+                     big-int literals, with 2^N annotation when
+                     recognized); premise shapes (clean_linear /
+                     ite_wrapped / mod_div_wrapped / mixed % histogram).
+                     Use to decide if a Boolean split is worth trying:
+                     when top-2 blocks own a majority of conflicts, the
+                     VC is a strong split candidate (see `lemur split
+                     --split-only '^(BLK__N|BLK__M)$'`).
 """,
     'nla-run': """\
 lemur nla-run BENCH.smt2 [--seed N] [--timeout T] [--tactic '...']
