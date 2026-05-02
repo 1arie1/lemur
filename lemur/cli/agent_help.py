@@ -541,6 +541,18 @@ lemur nla TRACE
     --top-by FIELD        sort descending by FIELD ∈ {vars, preconds,
                           monomials}. Use with --top-n.
     --top-n N             after --top-by, keep only top N.
+    --sample STRATEGY=N   pick N lemmas evenly spread across those whose
+                          strategy contains STRATEGY (case-insensitive
+                          substring; same matcher as --strategy). Picks
+                          at indices `i * total / N` for i in [0, N) so
+                          you get a representative spread of the run, not
+                          just the head. Composes with the other filters
+                          (`--strategy lin --min-vars 6 --sample lin=4`
+                          picks 4 from the post-filter list). When no
+                          render mode is set, defaults to --list output
+                          for the picked rows; `--detail`/`--details RANGE`
+                          override.
+    --sample-nlsat N      shorthand for --sample nlsat=N.
 
   output flags:
     -f rich|plain         rich on TTY, plain otherwise. ⚠ The argparse

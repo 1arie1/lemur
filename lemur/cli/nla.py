@@ -85,6 +85,14 @@ def register(subparsers):
                    help='Sort descending by this field; use with --top-n')
     p.add_argument('--top-n', type=int, default=None, metavar='N',
                    help='Limit to top N after --top-by sort')
+    p.add_argument('--sample', metavar='STRATEGY=N', default=None,
+                   help='After other filters, pick N lemmas evenly spread '
+                        'across those whose strategy matches STRATEGY '
+                        '(case-insensitive substring). Replaces a manual '
+                        '`--list | awk -F. ...` pipeline. If no mode flag is '
+                        'set, defaults to --list output for the picked N.')
+    p.add_argument('--sample-nlsat', type=int, default=None, metavar='N',
+                   help='Shorthand for --sample nlsat=N (the most common case).')
     p.set_defaults(func=run)
 
 
@@ -113,6 +121,50 @@ def _apply_filters(records, *, strategies, min_vars, min_preconds,
         if top_n is not None:
             out = out[:top_n]
     return out
+
+
+def _parse_sample_spec(spec: str) -> tuple[str, int]:
+    """Split a `STRATEGY=N` spec into its parts. Errors with a clear
+    message on malformed input."""
+    if '=' not in spec:
+        print(f"Error: --sample expects STRATEGY=N (got {spec!r})",
+              file=sys.stderr)
+        sys.exit(2)
+    strategy_substr, _, n_str = spec.partition('=')
+    try:
+        n = int(n_str)
+    except ValueError:
+        print(f"Error: --sample N must be a positive integer (got {n_str!r})",
+              file=sys.stderr)
+        sys.exit(2)
+    if n <= 0:
+        print("Error: --sample N must be > 0", file=sys.stderr)
+        sys.exit(2)
+    return strategy_substr.strip().lower(), n
+
+
+def _apply_sample(records, strategy_substr: str, n: int):
+    """Pick N lemmas evenly spread across those whose strategy contains
+    `strategy_substr` (case-insensitive). If fewer than N match, returns
+    them all. Preserves original relative order in the output.
+
+    Spread = `i * total / n` for i in [0, n). On total=10 N=4 the picks
+    are at indices 0, 2, 5, 7. On total=4 N=4 all four are picked.
+    """
+    matches = [r for r in records
+               if r.strategy and strategy_substr in r.strategy.lower()]
+    total = len(matches)
+    if total == 0 or n >= total:
+        return matches
+    seen: set[int] = set()
+    picked: list = []
+    for i in range(n):
+        idx = (i * total) // n
+        if idx in seen:
+            continue
+        seen.add(idx)
+        picked.append(matches[idx])
+    return picked
 
 
 def run(args):
@@ -155,8 +207,29 @@ def run(args):
         top_by=args.top_by,
         top_n=args.top_n,
     )
+
+    # `--sample STRATEGY=N` (or its `--sample-nlsat N` shorthand) picks N
+    # lemmas evenly spread across those whose strategy matches. Applied
+    # AFTER the standard filters so callers can compose
+    # `--strategy ord --min-vars 6 --sample ord=4` and get 4 from the
+    # post-filter list.
+    sample_spec = args.sample
+    if args.sample_nlsat is not None:
+        if sample_spec is not None:
+            print("Error: --sample and --sample-nlsat are mutually exclusive.",
+                  file=sys.stderr)
+            sys.exit(2)
+        sample_spec = f"nlsat={args.sample_nlsat}"
+    if sample_spec is not None:
+        strategy_substr, n = _parse_sample_spec(sample_spec)
+        before_sample = len(lemma_records)
+        lemma_records = _apply_sample(lemma_records, strategy_substr, n)
+        print(f"[sample] strategy~{strategy_substr!r} n={n}: "
+              f"{len(lemma_records)}/{before_sample} lemmas picked",
+              file=sys.stderr)
+
     filtered = len(lemma_records) != total_before
-    if filtered:
+    if filtered and sample_spec is None:
         print(f"[filter] {len(lemma_records)}/{total_before} lemmas match",
               file=sys.stderr)
 
@@ -164,7 +237,9 @@ def run(args):
     use_rich = fmt is None or fmt == 'rich'
     console = make_console(no_color=args.no_color) if use_rich else None
 
-    # Determine mode
+    # Determine mode. `--sample` defaults to list output when no other
+    # render mode is set (matches the workflow it's replacing — quick
+    # one-liners for the picked indices).
     if args.list:
         _render_list(lemma_records, fmt, console, varmap)
     elif args.detail is not None:
@@ -173,6 +248,8 @@ def run(args):
         ranges = parse_lemma_ranges(args.details)
         indices = expand_lemma_ranges(ranges, len(lemma_records))
         _render_details(indices, lemma_records, fmt, console, varmap)
+    elif sample_spec is not None:
+        _render_list(lemma_records, fmt, console, varmap)
     else:
         _render_summary(nla_entries, lemma_records, fmt, console, varmap,
                         args.limit, args.delta_limit)
