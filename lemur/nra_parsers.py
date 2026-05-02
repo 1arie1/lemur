@@ -256,11 +256,15 @@ def render_xform_rich(report: XFormReport, console) -> None:
         t = Table(title="top repeats", pad_edge=True)
         t.add_column("count", justify="right", style="bold")
         t.add_column("size", justify="right")
-        t.add_column("variables")
+        t.add_column("nvars", justify="right")
+        t.add_column("vars (head)", overflow="fold")
         t.add_column("fp", style="dim")
         for count, call in report.repeats:
-            t.add_row(str(count), str(call.size),
-                      _format_vars(call.variables), call.fingerprint)
+            head = ','.join(call.variables[:6])
+            if len(call.variables) > 6:
+                head += ',...'
+            t.add_row(str(count), str(call.size), str(len(call.variables)),
+                      head, call.fingerprint)
         console.print(t)
     else:
         console.print("[dim]top repeats: every nlsat call had a unique "
