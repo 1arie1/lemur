@@ -39,6 +39,19 @@ def register(subparsers):
                       help='Show full variable table for Nth lemma (1-based)')
     mode.add_argument('--details', type=str, default=None, metavar='RANGE',
                       help='Show detail for lemma ranges: 3, 5:10, 2-4, :5, 12:')
+    mode.add_argument('--x-form', action='store_true',
+                      help='Stable nlsat-call fingerprints from the [nra] '
+                           'constraint pool. Reports total calls, unique '
+                           'fingerprints, top repeats, size distribution. '
+                           'Reads [nra] entries from the same trace, or '
+                           'from --nra-trace PATH if separately captured.')
+
+    p.add_argument('--nra-trace', default=None, metavar='PATH',
+                   help='Optional path to a separately-captured -tr:nra '
+                        'trace, used by --x-form. If unset and --x-form is '
+                        'requested, [nra] entries must be in TRACE.')
+    p.add_argument('--top', type=int, default=10, metavar='N',
+                   help='Cap top-repeat rows in --x-form mode (default 10)')
 
     p.add_argument('--limit', type=int, default=5,
                    help='Number of lemma previews in summary (default: 5)')
@@ -97,6 +110,10 @@ def run(args):
         print(f"Error: trace file not found: {trace_path}", file=sys.stderr)
         sys.exit(1)
 
+    if getattr(args, 'x_form', False):
+        _run_xform(args, trace_path)
+        return
+
     # Parse trace, filter to nla_solver tag
     entries = list(parse_trace(trace_path))
     by_tag = group_by_tag(entries)
@@ -148,6 +165,43 @@ def run(args):
     else:
         _render_summary(nla_entries, lemma_records, fmt, console, varmap,
                         args.limit, args.delta_limit)
+
+
+def _run_xform(args, trace_path: Path) -> None:
+    """--x-form mode: parse [nra] constraint pools, report fingerprint stats."""
+    from lemur.nra_parsers import (
+        parse_nra_calls, build_xform_report,
+        render_xform_plain, render_xform_rich, render_xform_json,
+    )
+
+    nra_source = Path(args.nra_trace) if args.nra_trace else trace_path
+    if not nra_source.exists():
+        print(f"Error: nra trace not found: {nra_source}", file=sys.stderr)
+        sys.exit(1)
+
+    calls = parse_nra_calls(nra_source)
+    if not calls:
+        if args.nra_trace:
+            print(f"No [nra] check entries with constraint pools in "
+                  f"{nra_source}.", file=sys.stderr)
+        else:
+            print(f"No [nra] check entries in {nra_source}. Capture with "
+                  f"`-tr:nra` alongside `-tr:nla_solver`, or pass a "
+                  f"separately-captured trace via --nra-trace.",
+                  file=sys.stderr)
+        sys.exit(1)
+
+    report = build_xform_report(calls, top=args.top)
+
+    fmt = args.format
+    if fmt == 'json':
+        print(render_xform_json(report))
+        return
+    if fmt == 'rich' or (fmt is None and sys.stdout.isatty()):
+        console = make_console(no_color=args.no_color)
+        render_xform_rich(report, console)
+        return
+    sys.stdout.write(render_xform_plain(report))
 
 
 def _render_list(lemma_records, fmt, console, varmap):

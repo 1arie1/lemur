@@ -1,0 +1,41 @@
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:299 ---------
+true
+ |- !(x0 - x1 < 0)
+ |- !(x0 + x1 > 0)
+assignment:
+---
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:335 ---------
+nra result l_false
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:299 ---------
+true
+ |- !(x0 + x1 > 0)
+ |- !(x0 - x1 < 0)
+assignment:
+---
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:335 ---------
+nra result l_false
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:299 ---------
+true
+ |- !(x2 - 5 > 0)
+ |- !(x2 < 0)
+ |- !(x3 x2 - 1 > 0)
+assignment:
+---
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:335 ---------
+nra result l_undef
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:299 ---------
+true
+ |- !(x0 - x1 < 0)
+ |- !(x0 + x1 > 0)
+assignment:
+---
+------------------------------------------------
+-------- [nra] check /Users/arie/ag/z3/z3-edge/src/math/lp/nra_solver.cpp:335 ---------
+nra result l_false
+------------------------------------------------

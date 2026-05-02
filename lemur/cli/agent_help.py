@@ -444,6 +444,19 @@ lemur nla TRACE
     --details RANGE          multiple details. RANGE syntax is Python-
                              slice-like: `3` (single) | `5:10` | `2-4` |
                              `:5` (head) | `12:` (tail).
+    --x-form                 stable nlsat-call fingerprints from the
+                             [nra] constraint pool. Reports total calls,
+                             unique-fingerprint count, top repeats with
+                             constraint-set size and x-var list, and the
+                             min/median/max session-size distribution.
+                             Settles "is nlsat re-asked the same
+                             question?" — repeats by j-form output are
+                             bogus due to j-renumbering across nlsat
+                             invocations. Capture the trace with
+                             `-tr:nla_solver -tr:nra` (single file works);
+                             or pass --nra-trace PATH for a separately-
+                             captured nra trace. --top N caps repeat
+                             rows (default 10).
 
   filters (compose with AND; renumbering after filtering is 1-based):
     --strategy SUB        keep lemmas whose strategy contains SUB,
