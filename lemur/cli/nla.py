@@ -63,6 +63,15 @@ def register(subparsers):
                         '[nra] entries must be in TRACE.')
     p.add_argument('--top', type=int, default=10, metavar='N',
                    help='Cap top-repeat rows in --x-form mode (default 10)')
+    p.add_argument('--coarse', action='store_true',
+                   help='Coarse ("structural") fingerprints for --x-form: '
+                        'collapse integer/rational literals to LIT and '
+                        'alpha-rename #NNN aux IDs by first appearance, so '
+                        'lemmas that differ only in threshold values or aux-'
+                        'Bool atom selection bucket into one shape. Surfaces '
+                        'near-fixed-point cascades that the fine fingerprint '
+                        'reads as "diverse exploration". See '
+                        'z3-research/lemur/structural-fingerprint-proposal.md.')
 
     p.add_argument('--limit', type=int, default=5,
                    help='Number of lemma previews in summary (default: 5)')
@@ -271,11 +280,13 @@ def _run_xform(args, trace_path: Path) -> None:
             print(f"Error: nra trace not found: {nra_source}", file=sys.stderr)
             sys.exit(1)
 
+    coarse = bool(getattr(args, 'coarse', False))
     try:
         calls, source = parse_xform_calls(
             str(trace_path),
             prefer=args.x_form_source,
             nra_trace_path=args.nra_trace,
+            coarse=coarse,
         )
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -294,17 +305,23 @@ def _run_xform(args, trace_path: Path) -> None:
         sys.exit(1)
 
     report = build_xform_report(calls, top=args.top)
+    coarse_suffix = (
+        ", coarse: literals→LIT, #NNN α-renamed (structural shape)"
+        if coarse else ""
+    )
     if source == 'varmap':
         unit_label = 'lemmas (~lemma_builder)'
         provenance = (
             "varmap-resolved (R/I-form lemma signatures, from "
             "-tr:nla_solver). One unit = one lemma emission."
+            + coarse_suffix
         )
     else:
         unit_label = 'nlsat calls'
         provenance = (
             "nra constraint pool (x*-form, from -tr:nra). One unit = one "
             "nlsat invocation. Trace cost: ~8x larger than -tr:nla_solver."
+            + coarse_suffix
         )
 
     fmt = args.format
@@ -313,6 +330,7 @@ def _run_xform(args, trace_path: Path) -> None:
         body = _json.loads(render_xform_json(report))
         body['source'] = source
         body['unit'] = unit_label
+        body['coarse'] = coarse
         print(_json.dumps(body, indent=2))
         return
     if fmt == 'rich' or (fmt is None and sys.stdout.isatty()):

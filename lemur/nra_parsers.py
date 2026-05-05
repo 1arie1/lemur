@@ -81,18 +81,31 @@ def _is_constraint_pool(body: str) -> bool:
     return any(line.lstrip().startswith('|- ') for line in body.splitlines())
 
 
-def parse_nra_calls(trace_path: str | Path) -> list[NraCall]:
+def parse_nra_calls(
+    trace_path: str | Path, *, coarse: bool = False,
+) -> list[NraCall]:
     """Walk `[nra]` entries in trace order, pair constraint pools with
     their result lines, return one NraCall per nlsat invocation.
 
     A pool without a following result keeps `result=None`. A result
     without a preceding pool is dropped (no anchor to attach to).
+
+    `coarse=True` applies the structural-shape transform (see
+    `lemur.lemma_xform._coarse_signature`) before hashing, so the
+    [nra] x-form path can also bucket "same shape, drifting threshold"
+    repeats into one fingerprint.
     """
     entries = [e for e in parse_trace(trace_path) if e.tag == 'nra']
-    return _calls_from_entries(entries)
+    return _calls_from_entries(entries, coarse=coarse)
 
 
-def _calls_from_entries(entries: list[TraceEntry]) -> list[NraCall]:
+def _calls_from_entries(
+    entries: list[TraceEntry], *, coarse: bool = False,
+) -> list[NraCall]:
+    # Local import keeps lemma_xform → nra_parsers dependency one-way at
+    # module load time; it only matters when coarse mode is requested.
+    if coarse:
+        from lemur.lemma_xform import _coarse_signature
     calls: list[NraCall] = []
     pending: NraCall | None = None
 
@@ -114,13 +127,15 @@ def _calls_from_entries(entries: list[TraceEntry]) -> list[NraCall]:
                 raw.append(c_raw)
                 normalized.append(c_norm)
                 vars_set.update(_X_VAR_RE.findall(c_norm))
+            sig_lines = [_coarse_signature(s) for s in normalized] \
+                if coarse else normalized
             pending = NraCall(
                 index=len(calls),
-                constraints=tuple(sorted(normalized)),
+                constraints=tuple(sorted(sig_lines)),
                 raw_constraints=tuple(raw),
                 variables=tuple(sorted(vars_set, key=lambda v: int(v[1:]))),
                 result=None,
-                fingerprint=_fingerprint(normalized),
+                fingerprint=_fingerprint(sig_lines),
                 line_number=e.line_number,
             )
             calls.append(pending)

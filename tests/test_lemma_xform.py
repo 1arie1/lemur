@@ -9,6 +9,7 @@ from lemur.lemma_xform import (
     parse_xform_calls,
     _resolve_jvars,
     _extract_lemma_jform,
+    _coarse_signature,
 )
 from lemur.nra_parsers import build_xform_report
 
@@ -103,3 +104,101 @@ def test_parse_xform_calls_force_varmap_path():
     calls, source = parse_xform_calls(str(NLA_VARMAP), prefer='varmap')
     assert source == 'varmap'
     assert len(calls) == 3
+
+
+# --- Coarse fingerprint -----------------------------------------------------
+
+
+def test_coarse_collapses_standalone_integers():
+    assert _coarse_signature('R188 >= 1') == 'R188 >= LIT'
+    assert _coarse_signature('R188 + R195 <= 0') == 'R188 + R195 <= LIT'
+
+
+def test_coarse_collapses_negatives_and_rationals():
+    assert _coarse_signature('R7 >= -12') == 'R7 >= LIT'
+    assert _coarse_signature('R7 <= 5/4') == 'R7 <= LIT'
+    assert _coarse_signature('R7 <= -5 / 4') == 'R7 <= LIT'
+
+
+def test_coarse_collapses_bignum_underscores():
+    # z3's bignums print with underscores; the regex must absorb them.
+    assert _coarse_signature(
+        '(* R188 R195) <= 115_792_089_237'
+    ) == '(* R188 R195) <= LIT'
+
+
+def test_coarse_preserves_smt_identifier_digits():
+    # R/I/x/j var IDs and CANON-style enode names must NOT be normalized
+    # — they identify the structural variable, not snapshot data.
+    assert _coarse_signature('R188 >= 1') == 'R188 >= LIT'
+    assert _coarse_signature('I176 + I99 = 0') == 'I176 + I99 = LIT'
+    assert _coarse_signature('x12 * x42 >= 1') == 'x12 * x42 >= LIT'
+    assert _coarse_signature(
+        '(* CANON123!!8) <= 0'
+    ) == '(* CANON123!!8) <= LIT'
+
+
+def test_coarse_alpha_renames_aux_bool_ids_by_first_appearance():
+    # First #-id seen becomes #A0, second becomes #A1, etc.
+    out = _coarse_signature('(or #4422 #4427)')
+    assert out == '(or #A0 #A1)'
+    # Repeated reference reuses the same alias.
+    out = _coarse_signature('(or #4422 (and #4427 #4422))')
+    assert out == '(or #A0 (and #A1 #A0))'
+
+
+def test_coarse_state_is_per_signature_not_global():
+    # Each call to _coarse_signature starts the rename map at #A0.
+    out1 = _coarse_signature('(or #4422 #4427)')
+    out2 = _coarse_signature('(or #9999 #1000)')
+    assert out1 == out2 == '(or #A0 #A1)'
+
+
+def test_coarse_collapses_two_threshold_variants_to_one_shape():
+    # Two emissions of the "same shape, different threshold" pattern.
+    a = _coarse_signature('(* R188 R195) >= 1')
+    b = _coarse_signature('(* R188 R195) >= 7')
+    assert a == b == '(* R188 R195) >= LIT'
+
+
+def test_coarse_collapses_aux_id_reorderings_to_one_shape():
+    # Two emissions of the "same shape, different aux Bools in the same
+    # positions". Crucial for the long-tail conclusions where the lemma
+    # builder emits disjunctions over fresh auxiliaries on each call.
+    a = _coarse_signature('(or #4422 #4427) ==> (* R188 R195) >= 1')
+    b = _coarse_signature('(or #5500 #5503) ==> (* R188 R195) >= 7')
+    assert a == b
+
+
+def test_coarse_does_not_collapse_distinct_monomial_targets():
+    # Different R/I bracket → different shape, even after coarsening.
+    a = _coarse_signature('(* R188 R195) >= 1')
+    b = _coarse_signature('(* R188 R200) >= 1')
+    assert a != b
+
+
+def test_parse_lemma_xform_calls_coarse_buckets_threshold_drift():
+    # The basic fixture has 3 lemmas: 1 and 3 are identical (same fp
+    # already under fine), 2 differs. Under coarse the same picture
+    # should hold for THIS fixture (literals are all `1`, so coarse =
+    # fine on the constant). This test is about pipeline correctness:
+    # the coarse path runs end-to-end and produces the same kind of
+    # NraCall list.
+    calls = parse_lemma_xform_calls(NLA_VARMAP, coarse=True)
+    assert len(calls) == 3
+    assert calls[0].fingerprint == calls[2].fingerprint
+    assert calls[0].fingerprint != calls[1].fingerprint
+    # Display side reflects coarsening: every numeric literal is LIT.
+    assert all('1' not in c or 'LIT' in c
+               for c in calls[0].constraints), calls[0].constraints
+    assert any('LIT' in c for c in calls[0].constraints)
+
+
+def test_parse_xform_calls_threads_coarse_through_auto_path():
+    fine, _ = parse_xform_calls(str(NLA_VARMAP), prefer='auto', coarse=False)
+    coarse, _ = parse_xform_calls(str(NLA_VARMAP), prefer='auto', coarse=True)
+    # Same call count, but per-call signatures differ once a literal
+    # appears in the resolved string.
+    assert len(fine) == len(coarse) == 3
+    assert any('LIT' in c for c in coarse[0].constraints)
+    assert not any('LIT' in c for c in fine[0].constraints)
