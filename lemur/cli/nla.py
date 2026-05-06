@@ -80,6 +80,18 @@ def register(subparsers):
                         'without --coarse the raw varmap-resolved signature. '
                         'Closes the "fingerprint-hash-only" gap when you want '
                         'to know what the dominant shape actually is.')
+    p.add_argument('--target-only', action='store_true',
+                   help='Cascade-diagnostic view: fingerprint each lemma by '
+                        'just its target monomial (the LP variable being '
+                        'bounded/split/related), with --coarse normalization '
+                        'applied. Drops preconditions + conclusion thresholds, '
+                        'keeps only the structural anchor. For each target '
+                        'reports a strategy crosstab (which lemma families '
+                        'emitted against it). Strict relaxation of --coarse; '
+                        'over-aggregates productive runs but surfaces tight '
+                        'cascades on a small monomial set in one screen. '
+                        'Requires --x-form. See z3-research/lemur/'
+                        'target-only-fingerprint-proposal.md.')
 
     p.add_argument('--limit', type=int, default=5,
                    help='Number of lemma previews in summary (default: 5)')
@@ -190,6 +202,11 @@ def run(args):
         print(f"Error: trace file not found: {trace_path}", file=sys.stderr)
         sys.exit(1)
 
+    if getattr(args, 'target_only', False) and not getattr(args, 'x_form', False):
+        print("Error: --target-only requires --x-form (target extraction "
+              "uses the varmap-resolved view).", file=sys.stderr)
+        sys.exit(2)
+
     if getattr(args, 'x_form', False):
         _run_xform(args, trace_path)
         return
@@ -276,6 +293,10 @@ def _run_xform(args, trace_path: Path) -> None:
     """--x-form mode: stable nlsat-call fingerprints. Default source is
     per-lemma varmap snapshots (no extra capture); --x-form-source nra
     selects the older [nra]-block path which costs ~8x in trace size."""
+    if getattr(args, 'target_only', False):
+        _run_target_only(args, trace_path)
+        return
+
     from lemur.lemma_xform import parse_xform_calls
     from lemur.nra_parsers import (
         build_xform_report, render_xform_plain, render_xform_rich,
@@ -348,6 +369,62 @@ def _run_xform(args, trace_path: Path) -> None:
         console.print(f"[dim]source: {provenance}[/dim]")
         return
     sys.stdout.write(render_xform_plain(report, unit_label=unit_label, show=show))
+    sys.stdout.write(f"source: {provenance}\n")
+
+
+def _run_target_only(args, trace_path: Path) -> None:
+    """--target-only: per-lemma target monomial fingerprint with strategy
+    crosstab. Strict relaxation of --x-form --coarse; designed as a
+    cascade diagnostic, not general dedup."""
+    from lemur.lemma_xform import (
+        parse_lemma_target_calls, build_target_report,
+        render_target_plain, render_target_rich, render_target_json,
+    )
+
+    coarse = bool(getattr(args, 'coarse', False))
+    # The target text is the headline of this view; printing it in plain/
+    # rich is required for the output to be readable at all. JSON still
+    # honors --show so callers can ask for a compact (fingerprint-only)
+    # body. Counts are usually small (~25 rows) so the verbosity is
+    # cheap.
+    json_show = bool(getattr(args, 'show', False))
+    if args.x_form_source == 'nra':
+        # The [nra] path doesn't carry strategy / target-var data; only
+        # the varmap-resolved view supports target-only.
+        print("Error: --target-only requires the varmap path "
+              "(--x-form-source varmap or auto, not nra).",
+              file=sys.stderr)
+        sys.exit(2)
+
+    calls = parse_lemma_target_calls(str(trace_path), coarse=coarse)
+    if not calls:
+        print(
+            f"No ~lemma_builder + varmap pairs in {trace_path} for "
+            f"target-only view.", file=sys.stderr)
+        sys.exit(1)
+
+    report = build_target_report(calls, top=args.top)
+    coarse_suffix = " (coarse: literals→LIT, #NNN α-renamed)" if coarse else ""
+    provenance = (
+        "varmap-resolved target monomial per ~lemma_builder; one unit = "
+        "one lemma emission" + coarse_suffix
+    )
+
+    fmt = args.format
+    if fmt == 'json':
+        import json as _json
+        body = _json.loads(render_target_json(report, show=json_show))
+        body['unit'] = 'lemmas (~lemma_builder)'
+        body['coarse'] = coarse
+        body['view'] = 'target-only'
+        print(_json.dumps(body, indent=2))
+        return
+    if fmt == 'rich' or (fmt is None and sys.stdout.isatty()):
+        console = make_console(no_color=args.no_color)
+        render_target_rich(report, console, show=True)
+        console.print(f"[dim]source: {provenance}[/dim]")
+        return
+    sys.stdout.write(render_target_plain(report, show=True))
     sys.stdout.write(f"source: {provenance}\n")
 
 
