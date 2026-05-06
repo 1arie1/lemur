@@ -98,6 +98,22 @@ def register(subparsers):
     p.add_argument('--delta-limit', type=int, default=5,
                    help='Max variable change lines in summary (default: 5)')
 
+    # Round-productivity thresholds. Defaults are tentative on N=3 traces
+    # from the kvault VC (see ../z3-research/lemur/burst-stats-proposal.md
+    # for empirics); calibrate per benchmark family before treating either
+    # as a verdict. Per-instance exploration tool, not a general-purpose
+    # cascade detector.
+    p.add_argument('--productivity-threshold', type=float, default=0.35,
+                   metavar='F',
+                   help='Round-productivity rate (less-share) below which '
+                        'the summary marks the trace ⚠ unproductive '
+                        '(default: 0.35; tentative on a small corpus).')
+    p.add_argument('--yield-threshold', type=float, default=0.40,
+                   metavar='F',
+                   help='Eviction yield (monomials evicted / lemmas emitted) '
+                        'below which the summary marks the trace ⚠ low yield '
+                        '(default: 0.40; tentative on a small corpus).')
+
     # Filters (apply to list/detail/details/summary modes consistently; filtered
     # results are renumbered from 1).
     p.add_argument('--strategy', action='append', default=[], metavar='SUBSTR',
@@ -286,7 +302,9 @@ def run(args):
         _render_list(lemma_records, fmt, console, varmap)
     else:
         _render_summary(nla_entries, lemma_records, fmt, console, varmap,
-                        args.limit, args.delta_limit)
+                        args.limit, args.delta_limit,
+                        productivity_threshold=args.productivity_threshold,
+                        yield_threshold=args.yield_threshold)
 
 
 def _run_xform(args, trace_path: Path) -> None:
@@ -458,12 +476,49 @@ def _render_details(indices, lemma_records, fmt, console, varmap):
             print(render_lemma_detail_plain(lemma_records[i], idx, varmap=varmap))
 
 
+def _productivity_rows(prod, productivity_threshold: float,
+                       yield_threshold: float) -> list[tuple[str, str]]:
+    """Two summary lines (productivity rate + eviction yield) with
+    tentative ⚠ low warnings. Returns [] when the trace lacks status
+    lines (older z3 builds), since printing zeros there would be
+    misleading.
+
+    Status share is rendered as `25.5% less / 74.5% same / 0.0% more`
+    so the reader sees the full split, not just the headline `less`
+    rate; some operator workflows want the `more` count even when it's
+    typically zero (signals a different cascade pattern when it isn't).
+    """
+    if not prod.available or not prod.classified_rounds:
+        return [('Round productivity', 'unavailable (no `sz=…m_to_refine=…` '
+                                      'lines in trace)')]
+    share = prod.status_share
+    parts = [f"{100 * share.get(s, 0.0):.1f}% {s}"
+             for s in ('less', 'same', 'more')]
+    rate = prod.productivity_rate or 0.0
+    rate_marker = '  ⚠ low' if rate < productivity_threshold else ''
+    rows = [('Round productivity', ' / '.join(parts) + rate_marker)]
+
+    yld = prod.eviction_yield
+    if yld is None:
+        rows.append(('Eviction yield', 'unavailable (no lemmas emitted)'))
+    else:
+        yld_marker = '  ⚠ low' if yld < yield_threshold else ''
+        rows.append(('Eviction yield',
+                     f"{yld:.3f} monomials/lemma "
+                     f"({prod.total_evictions} / {prod.total_lemmas})"
+                     + yld_marker))
+    return rows
+
+
 def _render_summary(nla_entries, lemma_records, fmt, console, varmap,
-                    limit, delta_limit):
+                    limit, delta_limit, *,
+                    productivity_threshold: float = 0.35,
+                    yield_threshold: float = 0.40):
     """Show nla_solver overview: entry counts + lemma summary."""
     from collections import Counter
     import re
     from lemur.parsers import group_by_function
+    from lemur.productivity import compute_productivity_stats
 
     by_func = group_by_function(nla_entries)
 
@@ -493,6 +548,13 @@ def _render_summary(nla_entries, lemma_records, fmt, console, varmap,
             mn, mx = min(mon_counts), max(mon_counts)
             avg = sum(mon_counts) / len(mon_counts)
             rows.append(('Monomials to refine', f'min={mn} avg={avg:.1f} max={mx} (n={len(mon_counts)})'))
+
+    # Round productivity (m_to_refine queue-shrink rate) and eviction
+    # yield (monomials evicted per emitted lemma). Per-instance
+    # exploration tool — thresholds tentative; see help text.
+    prod = compute_productivity_stats(nla_entries)
+    rows.extend(_productivity_rows(prod, productivity_threshold,
+                                   yield_threshold))
 
     # Lemma summary
     if lemma_records:
