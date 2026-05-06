@@ -204,7 +204,10 @@ def _format_vars(vars_: tuple[str, ...], cap: int = 8) -> str:
     return '[' + ','.join(vars_[:cap]) + f',...] (+{len(vars_) - cap})'
 
 
-def render_xform_plain(report: XFormReport, *, unit_label: str = 'nlsat calls') -> str:
+def render_xform_plain(
+    report: XFormReport, *, unit_label: str = 'nlsat calls',
+    show: bool = False,
+) -> str:
     if report.total == 0:
         return f"(no {unit_label} found in trace)\n"
 
@@ -230,6 +233,14 @@ def render_xform_plain(report: XFormReport, *, unit_label: str = 'nlsat calls') 
             v = _format_vars(call.variables)
             lines.append(f"  count={count}  size={call.size}  "
                          f"vars={v}  fp={call.fingerprint}")
+            if show:
+                # `constraints` is sorted; in coarse mode it's the structural
+                # shape (LIT / #A0 tokens), in fine mode the raw resolved
+                # signature. Either is the right "what is this fingerprint?"
+                # answer.
+                for c in call.constraints:
+                    lines.append(f"      {c}")
+                lines.append("")
     else:
         lines.append("")
         lines.append("top repeats: (none — every nlsat call had a unique "
@@ -245,7 +256,8 @@ def render_xform_plain(report: XFormReport, *, unit_label: str = 'nlsat calls') 
 
 
 def render_xform_rich(report: XFormReport, console, *,
-                       unit_label: str = 'nlsat calls') -> None:
+                       unit_label: str = 'nlsat calls',
+                       show: bool = False) -> None:
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
@@ -288,17 +300,40 @@ def render_xform_rich(report: XFormReport, console, *,
             t.add_row(str(count), str(call.size), str(len(call.variables)),
                       head, call.fingerprint)
         console.print(t)
+        if show:
+            # The table summarizes; the per-fingerprint constraint dump
+            # below it answers "what shape does this fingerprint actually
+            # encode?". Indented and dimmed-style headers separate the
+            # representatives visually from the next section.
+            for count, call in report.repeats:
+                console.print(
+                    f"[bold]fp={call.fingerprint}[/bold]  "
+                    f"[dim](count={count}, size={call.size})[/dim]"
+                )
+                for c in call.constraints:
+                    console.print(f"    {c}", soft_wrap=True)
     else:
         console.print("[dim]top repeats: every nlsat call had a unique "
                       "constraint set[/dim]")
 
 
-def render_xform_json(report: XFormReport) -> str:
+def render_xform_json(report: XFormReport, *, show: bool = False) -> str:
     import json
-    return json.dumps(_xform_to_jsonable(report), indent=2)
+    return json.dumps(_xform_to_jsonable(report, show=show), indent=2)
 
 
-def _xform_to_jsonable(report: XFormReport) -> dict:
+def _xform_to_jsonable(report: XFormReport, *, show: bool = False) -> dict:
+    repeats = []
+    for count, call in report.repeats:
+        entry = {
+            "count": count,
+            "size": call.size,
+            "variables": list(call.variables),
+            "fingerprint": call.fingerprint,
+        }
+        if show:
+            entry["constraints"] = list(call.constraints)
+        repeats.append(entry)
     return {
         "nlsat_calls": report.total,
         "unique_fingerprints": report.unique_fingerprints,
@@ -306,13 +341,5 @@ def _xform_to_jsonable(report: XFormReport) -> dict:
         "size_min": report.size_min,
         "size_median": report.size_median,
         "size_max": report.size_max,
-        "top_repeats": [
-            {
-                "count": count,
-                "size": call.size,
-                "variables": list(call.variables),
-                "fingerprint": call.fingerprint,
-            }
-            for count, call in report.repeats
-        ],
+        "top_repeats": repeats,
     }

@@ -72,6 +72,14 @@ def register(subparsers):
                         'near-fixed-point cascades that the fine fingerprint '
                         'reads as "diverse exploration". See '
                         'z3-research/lemur/structural-fingerprint-proposal.md.')
+    p.add_argument('--show', action='store_true',
+                   help='In --x-form output, print one canonicalized '
+                        'representative lemma signature under each top-'
+                        'repeats row. With --coarse the representative '
+                        'shows the structural shape (LIT / #A0 placeholders); '
+                        'without --coarse the raw varmap-resolved signature. '
+                        'Closes the "fingerprint-hash-only" gap when you want '
+                        'to know what the dominant shape actually is.')
 
     p.add_argument('--limit', type=int, default=5,
                    help='Number of lemma previews in summary (default: 5)')
@@ -324,10 +332,11 @@ def _run_xform(args, trace_path: Path) -> None:
             + coarse_suffix
         )
 
+    show = bool(getattr(args, 'show', False))
     fmt = args.format
     if fmt == 'json':
         import json as _json
-        body = _json.loads(render_xform_json(report))
+        body = _json.loads(render_xform_json(report, show=show))
         body['source'] = source
         body['unit'] = unit_label
         body['coarse'] = coarse
@@ -335,10 +344,10 @@ def _run_xform(args, trace_path: Path) -> None:
         return
     if fmt == 'rich' or (fmt is None and sys.stdout.isatty()):
         console = make_console(no_color=args.no_color)
-        render_xform_rich(report, console, unit_label=unit_label)
+        render_xform_rich(report, console, unit_label=unit_label, show=show)
         console.print(f"[dim]source: {provenance}[/dim]")
         return
-    sys.stdout.write(render_xform_plain(report, unit_label=unit_label))
+    sys.stdout.write(render_xform_plain(report, unit_label=unit_label, show=show))
     sys.stdout.write(f"source: {provenance}\n")
 
 

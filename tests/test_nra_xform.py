@@ -137,6 +137,35 @@ def test_render_json_keys():
     assert r['count'] == 3
     assert r['size'] == 2
     assert r['variables'] == ['x0', 'x1']
+    # Without --show, no constraints field is emitted.
+    assert 'constraints' not in r
+
+
+def test_render_plain_show_dumps_constraints_under_each_repeat():
+    calls = parse_nra_calls(REPEATS)
+    report = build_xform_report(calls, top=10)
+    out = render_xform_plain(report, show=True)
+    # Top-repeats header still present, plus the constraints body indented
+    # below each row so the user can read what shape this fingerprint
+    # encodes.
+    assert 'top repeats:' in out
+    assert 'count=3' in out
+    rep_call = report.repeats[0][1]
+    for c in rep_call.constraints:
+        assert c in out
+    # Without --show, no constraint body.
+    plain = render_xform_plain(report, show=False)
+    for c in rep_call.constraints:
+        assert plain.count(c) == 0
+
+
+def test_render_json_show_includes_constraints():
+    calls = parse_nra_calls(REPEATS)
+    report = build_xform_report(calls, top=10)
+    obj = json.loads(render_xform_json(report, show=True))
+    r = obj['top_repeats'][0]
+    assert 'constraints' in r
+    assert r['constraints'] == list(report.repeats[0][1].constraints)
 
 
 def test_top_caps_repeats():
