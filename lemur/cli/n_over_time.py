@@ -215,6 +215,12 @@ def _render_html(round_datas, *, out_path: str, shared_y: bool):
         vertical_spacing=0.08,
     )
 
+    # Gold round-span bands are batched into one fig.update_layout(shapes=...)
+    # call after the per-trace loop. add_vrect appends + revalidates layout
+    # shapes per call, which is O(N²) at thousands of rounds; one assignment
+    # at the end is O(N).
+    band_shapes: list[dict] = []
+
     for i, rd in enumerate(round_datas):
         row = i + 1
         color = _PLOT_COLORS_HEX[i % len(_PLOT_COLORS_HEX)]
@@ -231,15 +237,18 @@ def _render_html(round_datas, *, out_path: str, shared_y: bool):
             row=row, col=1,
         )
 
-        # Gold shaded band per matched (round-start, round-end) pair.
+        xref = 'x' if row == 1 else f'x{row}'
+        yref = 'y domain' if row == 1 else f'y{row} domain'
         for (start_idx, _start_N), pop in zip(rd.round_starts, rd.pop_marks):
-            end_idx = pop[0]
-            fig.add_vrect(
-                x0=start_idx, x1=end_idx,
+            band_shapes.append(dict(
+                type='rect',
+                xref=xref, yref=yref,
+                x0=start_idx, x1=pop[0],
+                y0=0, y1=1,
                 fillcolor='gold', opacity=0.10,
-                line_width=0,
-                row=row, col=1,
-            )
+                line=dict(width=0),
+                layer='below',
+            ))
 
         # Dotted gray drop from prev_N down to post-pop level.
         if rd.pop_marks:
@@ -254,24 +263,6 @@ def _render_html(round_datas, *, out_path: str, shared_y: bool):
                     line=dict(color='gray', width=0.6, dash='dot'),
                     name=f'{rd.label} drop', legendgroup=rd.label,
                     showlegend=False, hoverinfo='skip',
-                ),
-                row=row, col=1,
-            )
-
-        # Green up-triangle at every round start (paired and unpaired).
-        if rd.round_starts:
-            fig.add_trace(
-                go.Scatter(
-                    x=[s[0] for s in rd.round_starts],
-                    y=[s[1] for s in rd.round_starts],
-                    mode='markers',
-                    marker=dict(color='green', size=8, symbol='triangle-up'),
-                    name=f'{rd.label} round-start',
-                    legendgroup=rd.label, showlegend=True,
-                    hovertemplate=(
-                        'emission #%{x}<br>'
-                        'round started at N=%{y}<extra></extra>'
-                    ),
                 ),
                 row=row, col=1,
             )
@@ -302,7 +293,7 @@ def _render_html(round_datas, *, out_path: str, shared_y: bool):
     fig.update_layout(
         title=(
             'N over time per trace — line: N at each NLA emission. '
-            'Green ▲=round start. Gold band=round span. '
+            'Gold band=round span. '
             'Red ▼=post-POP level after round-ending POP.'
         ),
         height=380 * len(round_datas) + 80,
@@ -310,6 +301,9 @@ def _render_html(round_datas, *, out_path: str, shared_y: bool):
     )
     fig.update_xaxes(showgrid=True, gridcolor='#eee')
     fig.update_yaxes(showgrid=True, gridcolor='#eee')
+
+    if band_shapes:
+        fig.update_layout(shapes=band_shapes)
 
     fig.write_html(
         out_path,
@@ -349,15 +343,6 @@ def _render_png(round_datas, *, out_path: str, shared_y: bool):
             ax.vlines(idx, post, prev_N, colors='gray', linewidth=0.4,
                       alpha=0.35, linestyles=':')
 
-        if rd.round_starts:
-            ax.scatter(
-                [s[0] for s in rd.round_starts],
-                [s[1] for s in rd.round_starts],
-                s=18, color='green', alpha=0.85, marker='^',
-                edgecolors='none', zorder=3,
-                label='round start (N at first emission)',
-            )
-
         if rd.pop_marks:
             ax.scatter(
                 [m[0] for m in rd.pop_marks],
@@ -375,7 +360,7 @@ def _render_png(round_datas, *, out_path: str, shared_y: bool):
 
     fig.suptitle(
         'N over time — line=N at each NLA emission, '
-        'green ▲=round start, gold band=round span, '
+        'gold band=round span, '
         'red ▼=post-POP level (round-ending POP)',
         fontsize='medium', y=1.0,
     )

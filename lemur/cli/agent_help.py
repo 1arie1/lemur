@@ -875,13 +875,13 @@ lemur n-over-time TRACE [TRACE ...] [--label LABEL ...]
 
   plot semantics (html/png):
     line              N at each NLA emission (x=emission index)
-    green ▲           round start (NLA emission anchored at this N)
     gold band         round span (start → matching pop)
     red ▼             post-POP level after a round-ending pop
     dotted gray       crossing-depth segment from prev N down to post-POP
 
-    A trailing green ▲ with no closing red ▼ means the trace ended
-    mid-round (trace was truncated by --timeout, etc.).
+    A trailing gold band with no closing red ▼ would indicate a round
+    that didn't close before the trace ended; in practice the renderer
+    only draws bands for matched (start, pop) pairs.
 
   table / csv schema:
     rich (TTY default): one panel per trace with totals + quartile table
