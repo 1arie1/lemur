@@ -554,6 +554,24 @@ lemur nla TRACE
                           override.
     --sample-nlsat N      shorthand for --sample nlsat=N.
 
+  round-aware filters (mutually exclusive; both need the same trace tags
+  as `lemur n-over-time` — capture via `lemur sweep --trace
+  nla_solver,decide,pop_scope,arith_conflict --save DIR/`):
+    --round N             keep only lemmas in round N (1-based). Slices
+                          the lemma list BEFORE other filters, so
+                          `--round 5 --strategy grob` means "grob lemmas
+                          in round 5". Round 1 = first ~lemma_builder
+                          through the first round-ending pop.
+    --by-round            group --list output by round, with a header
+                          per round listing its lemma index range and
+                          whether the round closed before the trace
+                          ended ("open — trace ended mid-round" tag on
+                          unclosed final rounds). Empty rounds (filtered
+                          out by --strategy etc.) are skipped silently.
+                          Implies --list rendering — combine with
+                          --strategy / --min-vars / etc., not with
+                          --detail/--details.
+
   output flags:
     -f rich|plain         rich on TTY, plain otherwise. ⚠ The argparse
                           choice `json` is currently a no-op (falls
@@ -865,6 +883,13 @@ lemur n-over-time TRACE [TRACE ...] [--label LABEL ...]
                        table (writes CSV to file) and json.
     --shared-y         Plot formats only: shared y-axis across subplots.
                        Useful when comparing N magnitudes between traces.
+    --lemmas-per-round With --format json only: augment per-trace dict
+                       with a `rounds` array — one entry per detected
+                       round with {round, lemma_start, lemma_end, closed,
+                       lemmas: [{index, strategy, conclusion, preconds,
+                       vars, monomials}]}. lemma indices match
+                       `lemur nla --list` 1:1, so a downstream tool can
+                       cross-reference into other lemur views.
     --no-color         Rich table only.
 
   what is a "round":
@@ -927,10 +952,22 @@ lemur n-over-time TRACE [TRACE ...] [--label LABEL ...]
       --label 'TO seed' --label 'closing seed' \\
       --format html --out /tmp/n.html
 
+    # 4. drill into the lemmas of one round visible on the plot
+    lemur nla ./out/default_s0.trace --round 5 --list
+
+    # 5. eyeball the full round-by-round breakdown
+    lemur nla ./out/default_s0.trace --by-round --list
+
+    # 6. dump round + lemma metadata for a downstream script
+    lemur n-over-time ./out/default_s0.trace --format json \\
+      --lemmas-per-round > rounds.json
+
   related:
     lemur sweep --trace ...   produces the trace files.
     lemur stats               trace-wide tag/function aggregates.
-    lemur nla                 NLA lemma drill-down on the same trace.
+    lemur nla --round N       lemmas in one specific round (same trace,
+                              lemma indices are 1:1 with this view).
+    lemur nla --by-round      grouped lemma list with round headers.
 """,
     'sdiff': """\
 lemur sdiff A.smt2 B.smt2 [--apply TACTIC | --apply-a T --apply-b T]

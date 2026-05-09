@@ -13,6 +13,7 @@ from lemur.report import (
     parse_lemma_ranges, expand_lemma_ranges,
     humanize_varmap, humanize_constants,
 )
+from lemur.round import parse_round_data, lemma_ranges_per_round, RoundLemmaRange
 from lemur.cli import agent_help
 
 from rich.panel import Panel
@@ -138,6 +139,23 @@ def register(subparsers):
                         'set, defaults to --list output for the picked N.')
     p.add_argument('--sample-nlsat', type=int, default=None, metavar='N',
                    help='Shorthand for --sample nlsat=N (the most common case).')
+
+    # Round-aware filters. Trace must carry decide+pop_scope+nla_solver
+    # tags (capture via `lemur sweep --trace
+    # nla_solver,decide,pop_scope,arith_conflict`); same data backs
+    # `lemur n-over-time`. Mutually exclusive — --round picks one round,
+    # --by-round groups all rounds.
+    round_grp = p.add_mutually_exclusive_group()
+    round_grp.add_argument('--round', type=int, default=None, metavar='N',
+                           help='Restrict to lemmas in round N (1-based). '
+                                'A round runs from one ~lemma_builder '
+                                'emission until a pop_scope drops the SAT '
+                                'level below that emission\'s level.')
+    round_grp.add_argument('--by-round', action='store_true',
+                           help='Group --list output by round, with a '
+                                'header per round noting the lemma index '
+                                'range and whether the round closed before '
+                                'the trace ended.')
     p.set_defaults(func=run)
 
 
@@ -243,6 +261,42 @@ def run(args):
 
     lemma_records = list(LemmaAnalyzer(nla_entries).extract())
 
+    # Round-aware slicing & grouping. Both --round and --by-round require
+    # decide/pop_scope/nla_solver in the trace. Map original lemma index
+    # by entry.line_number (preserved across filters) so --by-round can
+    # group post-filter records back into their source round.
+    round_ranges: list[RoundLemmaRange] | None = None
+    orig_idx_by_lineno: dict[int, int] = {}
+    if args.round is not None or args.by_round:
+        rd = parse_round_data(trace_path, warn=False)
+        round_ranges = lemma_ranges_per_round(rd)
+        if not round_ranges:
+            print("Error: no rounds detected in trace. --round / --by-round "
+                  "need -tr:decide -tr:pop_scope -tr:nla_solver in the "
+                  "capture (capture via `lemur sweep --trace "
+                  "nla_solver,decide,pop_scope,arith_conflict`).",
+                  file=sys.stderr)
+            sys.exit(1)
+        orig_idx_by_lineno = {
+            rec.entry.line_number: i + 1
+            for i, rec in enumerate(lemma_records)
+        }
+        if args.round is not None:
+            match = next((r for r in round_ranges if r.round == args.round),
+                         None)
+            if match is None:
+                avail = ", ".join(str(r.round) for r in round_ranges)
+                print(f"Error: round {args.round} not in trace. "
+                      f"Detected rounds: {avail}", file=sys.stderr)
+                sys.exit(1)
+            # Slice BEFORE the standard filters so --strategy etc. operate
+            # within the round's lemmas. Renumbering after filter is then
+            # 1-based within the picked round.
+            lemma_records = lemma_records[match.lemma_start - 1 : match.lemma_end]
+            print(f"[round {match.round}] lemmas {match.lemma_start}-"
+                  f"{match.lemma_end} ({'closed' if match.closed else 'open'})",
+                  file=sys.stderr)
+
     # Apply filters (affects all modes). Warn on --top-n without --top-by and
     # vice versa since they're meant to be used together.
     if args.top_n is not None and args.top_by is None:
@@ -289,8 +343,16 @@ def run(args):
 
     # Determine mode. `--sample` defaults to list output when no other
     # render mode is set (matches the workflow it's replacing — quick
-    # one-liners for the picked indices).
-    if args.list:
+    # one-liners for the picked indices). `--by-round` implies list mode
+    # — it's a grouping over the same row format.
+    if args.by_round:
+        if args.detail is not None or args.details is not None:
+            print("Error: --by-round groups list output; combine with --list, "
+                  "not --detail/--details.", file=sys.stderr)
+            sys.exit(2)
+        _render_list_by_round(lemma_records, round_ranges, orig_idx_by_lineno,
+                              fmt, console, varmap)
+    elif args.list:
         _render_list(lemma_records, fmt, console, varmap)
     elif args.detail is not None:
         _render_details([args.detail], lemma_records, fmt, console, varmap)
@@ -454,6 +516,42 @@ def _render_list(lemma_records, fmt, console, varmap):
         render_lemma_list_rich(lemma_records, console, varmap=varmap)
     else:
         print(render_lemma_list_plain(lemma_records, varmap=varmap))
+
+
+def _render_list_by_round(lemma_records, round_ranges, orig_idx_by_lineno,
+                          fmt, console, varmap):
+    """List output sectioned by round. Empty rounds (filtered out by
+    --strategy etc.) are skipped silently."""
+    if not lemma_records:
+        print("No lemmas found.", file=sys.stderr)
+        return
+
+    by_round: dict[int, list] = {}
+    for rec in lemma_records:
+        orig_idx = orig_idx_by_lineno.get(rec.entry.line_number)
+        if orig_idx is None:
+            continue
+        for r in round_ranges:
+            if r.lemma_start <= orig_idx <= r.lemma_end:
+                by_round.setdefault(r.round, []).append(rec)
+                break
+
+    use_rich = console and (fmt is None or fmt == 'rich')
+    for r in round_ranges:
+        recs = by_round.get(r.round, [])
+        if not recs:
+            continue
+        marker = "" if r.closed else "  (open — trace ended mid-round)"
+        header = (f"Round {r.round}: lemmas {r.lemma_start}–{r.lemma_end} "
+                  f"({len(recs)} after filter){marker}")
+        if use_rich:
+            console.print()
+            console.print(RichText(header, style="bold yellow"))
+            render_lemma_list_rich(recs, console, varmap=varmap)
+        else:
+            print()
+            print(header)
+            print(render_lemma_list_plain(recs, varmap=varmap))
 
 
 def _render_details(indices, lemma_records, fmt, console, varmap):

@@ -29,11 +29,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from lemur.parsers import parse_trace
 
-_HEADER_RE = re.compile(r'-+ \[(\w+)\] (\w+) ')
-_DEC_RE = re.compile(r'\s*splitting, lvl:\s*(\d+)')
-_POP_RE = re.compile(r'\s*backtracking:\s*(\d+),\s*new_lvl:\s*(\d+)')
-_AC_RE = re.compile(r'\s*@(\d+)\s+(conflict|lemma)')
+
+_DEC_RE = re.compile(r'splitting, lvl:\s*(\d+)')
+_POP_RE = re.compile(r'backtracking:\s*(\d+),\s*new_lvl:\s*(\d+)')
+_AC_RE = re.compile(r'@(\d+)\s+(conflict|lemma)')
 
 
 @dataclass
@@ -83,74 +84,63 @@ def parse_round_data(
     round_event_count = 0
     last_pop_below_N: tuple[int, int] | None = None  # (prev_N, post)
 
-    state: str | None = None
-    with open(path) as f:
-        for line in f:
-            m = _HEADER_RE.match(line)
+    # Single pass over the structured trace. parse_trace handles
+    # header/footer detection; we match on tag + function so that
+    # `entry.function == '~lemma_builder'` is the same gate
+    # `LemmaAnalyzer` uses — emission_idx here lines up 1:1 with
+    # lemma indices in `lemur nla --list`.
+    for entry in parse_trace(path):
+        if entry.tag == 'decide':
+            m = _DEC_RE.search(entry.body)
             if m:
-                state = m.group(1)
-                continue
-            if state is None:
-                continue
-
-            if state == 'decide':
-                m = _DEC_RE.match(line)
-                if m:
-                    current_level = int(m.group(1))
-                    counts['DEC'] += 1
-                    if current_level > max_dec:
-                        max_dec = current_level
-                    if round_N is not None:
-                        round_event_count += 1
-                        if current_level > round_max_level:
-                            round_max_level = current_level
-                    state = None
-            elif state == 'pop_scope':
-                m = _POP_RE.match(line)
-                if m:
-                    drop = int(m.group(1))
-                    target = int(m.group(2))
-                    counts['POP'] += 1
-                    if round_N is not None:
-                        if target >= round_N:
-                            rd.internal_pop_drops.append(drop)
-                            round_event_count += 1
-                        else:
-                            rd.round_climbs.append(round_max_level - round_N)
-                            rd.end_drops.append(round_N - target)
-                            rd.round_lengths.append(round_event_count)
-                            last_pop_below_N = (round_N, target)
-                            round_N = None
-                            round_max_level = 0
-                            round_event_count = 0
-                    current_level = target
-                    state = None
-            elif state == 'arith_conflict':
-                m = _AC_RE.match(line)
-                if m:
-                    counts['AC'] += 1
-                    if round_N is not None:
-                        round_event_count += 1
-                    state = None
-            elif state == 'nla_solver':
-                if 'false_case_of_check_nla' in line or '~lemma_builder' in line:
-                    rd.n_series.append(current_level)
-                    counts['NLA'] += 1
-                    emission_idx = len(rd.n_series)
-                    if last_pop_below_N is not None:
-                        prev_N, post = last_pop_below_N
-                        rd.pop_marks.append((emission_idx, prev_N, post))
-                        last_pop_below_N = None
-                    if round_N is None:
-                        round_N = current_level
+                current_level = int(m.group(1))
+                counts['DEC'] += 1
+                if current_level > max_dec:
+                    max_dec = current_level
+                if round_N is not None:
+                    round_event_count += 1
+                    if current_level > round_max_level:
                         round_max_level = current_level
-                        round_event_count = 0
-                        rd.round_starts.append((emission_idx, current_level))
-                    else:
+        elif entry.tag == 'pop_scope':
+            m = _POP_RE.search(entry.body)
+            if m:
+                drop = int(m.group(1))
+                target = int(m.group(2))
+                counts['POP'] += 1
+                if round_N is not None:
+                    if target >= round_N:
+                        rd.internal_pop_drops.append(drop)
                         round_event_count += 1
-                    state = None
+                    else:
+                        rd.round_climbs.append(round_max_level - round_N)
+                        rd.end_drops.append(round_N - target)
+                        rd.round_lengths.append(round_event_count)
+                        last_pop_below_N = (round_N, target)
+                        round_N = None
+                        round_max_level = 0
+                        round_event_count = 0
+                current_level = target
+        elif entry.tag == 'arith_conflict':
+            m = _AC_RE.search(entry.body)
+            if m:
+                counts['AC'] += 1
+                if round_N is not None:
+                    round_event_count += 1
+        elif entry.tag == 'nla_solver' and entry.function == '~lemma_builder':
+            rd.n_series.append(current_level)
+            counts['NLA'] += 1
+            emission_idx = len(rd.n_series)
+            if last_pop_below_N is not None:
+                prev_N, post = last_pop_below_N
+                rd.pop_marks.append((emission_idx, prev_N, post))
+                last_pop_below_N = None
+            if round_N is None:
+                round_N = current_level
+                round_max_level = current_level
+                round_event_count = 0
+                rd.round_starts.append((emission_idx, current_level))
             else:
-                state = None
+                round_event_count += 1
 
     rd.totals = {
         'rounds': len(rd.round_starts),
@@ -171,6 +161,56 @@ def parse_round_data(
         )
 
     return rd
+
+
+@dataclass
+class RoundLemmaRange:
+    """1-based lemma index range covered by one round.
+
+    `lemma_start` and `lemma_end` are inclusive 1-based indices into the
+    LemmaAnalyzer's record list (which sees only ~lemma_builder blocks
+    in trace order — the same numbering `lemur nla --list` uses).
+    `closed` is True when a round-ending pop bounded the round; False
+    means the trace ended mid-round and `lemma_end` is the last lemma
+    in the trace.
+    """
+    round: int            # 1-based
+    lemma_start: int      # 1-based inclusive
+    lemma_end: int        # 1-based inclusive
+    closed: bool
+
+
+def lemma_ranges_per_round(rd: RoundData) -> list[RoundLemmaRange]:
+    """Slice the lemma stream by round boundaries.
+
+    Each round_starts[i] anchors round i+1 starting at lemma index
+    round_starts[i][0]. The next round's anchor (or trace end) bounds it.
+    pop_marks[i][0] is the FIRST lemma of round i+1 (i.e. the lemma that
+    began the round AFTER the round-ending pop), so round i ends at
+    lemma index pop_marks[i][0] - 1.
+    """
+    out: list[RoundLemmaRange] = []
+    n = len(rd.round_starts)
+    last_lemma = len(rd.n_series)
+    for i, (start_idx, _anchor_N) in enumerate(rd.round_starts):
+        if i < len(rd.pop_marks):
+            end_idx = rd.pop_marks[i][0] - 1
+            closed = True
+        else:
+            end_idx = last_lemma
+            closed = False
+        # Only emit non-empty ranges. (start_idx > end_idx would happen if
+        # a round started but the very next line was its closing pop with
+        # no further lemmas — shouldn't occur given our state machine,
+        # but guard anyway.)
+        if end_idx >= start_idx:
+            out.append(RoundLemmaRange(
+                round=i + 1,
+                lemma_start=start_idx,
+                lemma_end=end_idx,
+                closed=closed,
+            ))
+    return out
 
 
 def quartiles(xs: list[int]) -> dict[str, float | int]:

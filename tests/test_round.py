@@ -7,13 +7,23 @@ import sys
 
 import pytest
 
-from lemur.round import parse_round_data, quartiles
+from lemur.round import (
+    parse_round_data, quartiles, lemma_ranges_per_round, RoundLemmaRange,
+)
 
 
-def _block(tag: str, body: str) -> str:
-    return (f"-------- [{tag}] fn /tmp/x.cpp:1 ---------\n"
+def _block(tag: str, body: str, fn: str = "fn") -> str:
+    return (f"-------- [{tag}] {fn} /tmp/x.cpp:1 ---------\n"
             f"{body}\n"
             "------------------------------------------------\n")
+
+
+def _lemma(idx: int) -> str:
+    """Minimal ~lemma_builder block parseable by both round.py (function
+    name '~lemma_builder' triggers emission) and LemmaAnalyzer (which
+    needs strategy + conclusion lines)."""
+    body = f"strategy {idx}\n ==> j1 >= {idx}"
+    return _block("nla_solver", body, fn="~lemma_builder")
 
 
 # Three rounds, the third unclosed at trace end.
@@ -34,20 +44,20 @@ def _block(tag: str, body: str) -> str:
 #   NLA #4            → starts round 2 at (idx=4, N=8);  pop_marks[1]=(4,12,8)
 #   <trace ends, round 2 unclosed>
 SYNTHETIC_TRACE = "".join([
-    _block("decide",        "splitting, lvl: 5"),
-    _block("decide",        "splitting, lvl: 10"),
-    _block("nla_solver",    "~lemma_builder"),
-    _block("decide",        "splitting, lvl: 15"),
-    _block("nla_solver",    "~lemma_builder"),
+    _block("decide",         "splitting, lvl: 5"),
+    _block("decide",         "splitting, lvl: 10"),
+    _lemma(1),
+    _block("decide",         "splitting, lvl: 15"),
+    _lemma(2),
     _block("arith_conflict", "@18 conflict"),
-    _block("decide",        "splitting, lvl: 20"),
-    _block("pop_scope",     "backtracking: 13, new_lvl: 7"),
-    _block("decide",        "splitting, lvl: 12"),
-    _block("nla_solver",    "~lemma_builder"),
-    _block("decide",        "splitting, lvl: 15"),
-    _block("pop_scope",     "backtracking: 5, new_lvl: 13"),
-    _block("pop_scope",     "backtracking: 10, new_lvl: 8"),
-    _block("nla_solver",    "~lemma_builder"),
+    _block("decide",         "splitting, lvl: 20"),
+    _block("pop_scope",      "backtracking: 13, new_lvl: 7"),
+    _block("decide",         "splitting, lvl: 12"),
+    _lemma(3),
+    _block("decide",         "splitting, lvl: 15"),
+    _block("pop_scope",      "backtracking: 5, new_lvl: 13"),
+    _block("pop_scope",      "backtracking: 10, new_lvl: 8"),
+    _lemma(4),
 ])
 
 
@@ -102,26 +112,30 @@ def test_empty_trace_warns(tmp_path, capsys):
     assert "no NLA emissions" in captured.err
 
 
-def test_false_case_of_check_nla_also_emits(tmp_path):
-    """The other NLA-emission marker variant must also be recognized."""
+def test_false_case_of_check_nla_does_not_emit(tmp_path):
+    """Only `~lemma_builder` counts as an emission. false_case_of_check_nla
+    is a different nla_solver function (companion metadata); counting it
+    as an emission would inflate n_series and break 1:1 cross-referencing
+    with `lemur nla`'s lemma indices."""
     trace = "".join([
         _block("decide", "splitting, lvl: 3"),
-        _block("nla_solver", "false_case_of_check_nla on monomial 5"),
+        _block("nla_solver", "false_case stuff",
+               fn="false_case_of_check_nla"),
         _block("decide", "splitting, lvl: 7"),
-        _block("nla_solver", "~lemma_builder"),
+        _lemma(1),
         _block("pop_scope", "backtracking: 4, new_lvl: 1"),
     ])
     p = _write_trace(tmp_path, "alt.trace", trace)
     rd = parse_round_data(p)
-    assert rd.n_series == [3, 7]
-    assert rd.totals["nla_emissions"] == 2
+    assert rd.n_series == [7]
+    assert rd.totals["nla_emissions"] == 1
 
 
 def test_pop_below_zero_round_anchor(tmp_path):
     """Round anchored at N=0 must still be detected; only target<N triggers
     round-end. target=0 with N=0 is a no-op (target>=N)."""
     trace = "".join([
-        _block("nla_solver", "~lemma_builder"),       # round 0 starts at N=0
+        _lemma(1),                                   # round 0 starts at N=0
         _block("decide", "splitting, lvl: 5"),
         _block("pop_scope", "backtracking: 5, new_lvl: 0"),  # target=N → internal
     ])
@@ -130,6 +144,33 @@ def test_pop_below_zero_round_anchor(tmp_path):
     assert rd.round_starts == [(1, 0)]
     assert rd.pop_marks == []   # no round-ending pop (target 0 not < N 0)
     assert rd.internal_pop_drops == [5]
+
+
+def test_lemma_ranges_per_round(tmp_path):
+    """Each round's lemma index range is derivable from RoundData."""
+    p = _write_trace(tmp_path, "lr.trace", SYNTHETIC_TRACE)
+    rd = parse_round_data(p)
+    ranges = lemma_ranges_per_round(rd)
+
+    # SYNTHETIC_TRACE walk:
+    #   round 1: NLA #1, NLA #2, then closing pop @ next-emission idx 3
+    #            → covers lemmas 1..2  (closed)
+    #   round 2: NLA #3, then internal pop, then closing pop @ idx 4
+    #            → covers lemma  3..3  (closed)
+    #   round 3: NLA #4, trace ends
+    #            → covers lemma  4..4  (open)
+    assert ranges == [
+        RoundLemmaRange(round=1, lemma_start=1, lemma_end=2, closed=True),
+        RoundLemmaRange(round=2, lemma_start=3, lemma_end=3, closed=True),
+        RoundLemmaRange(round=3, lemma_start=4, lemma_end=4, closed=False),
+    ]
+
+
+def test_lemma_ranges_per_round_empty_trace(tmp_path):
+    """A trace with no NLA emissions yields no ranges."""
+    p = _write_trace(tmp_path, "e.trace", "no entries\n")
+    rd = parse_round_data(p, warn=False)
+    assert lemma_ranges_per_round(rd) == []
 
 
 def test_quartiles_empty_and_simple():
@@ -172,3 +213,84 @@ def test_cli_table_csv_to_file(tmp_path):
     assert "csv,rounds,3" in text
     assert "csv,nla_emissions,4" in text
     assert "round climb (max-N)" in text
+
+
+def test_cli_nla_round_filter(tmp_path):
+    """`lemur nla --round 1` keeps only the lemmas in round 1."""
+    p = _write_trace(tmp_path, "r.trace", SYNTHETIC_TRACE)
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "nla", str(p), "--round", "1", "--list", "-f", "plain"],
+        capture_output=True, text=True, check=True,
+    )
+    lines = [ln for ln in result.stdout.strip().split('\n') if ln.strip()]
+    # Round 1 covers lemmas 1..2 in SYNTHETIC_TRACE (strategy "strategy 1"
+    # and "strategy 2"), renumbered 1.. after filter.
+    assert len(lines) == 2
+    assert lines[0].startswith("1.")
+    assert lines[1].startswith("2.")
+    assert "[round 1] lemmas 1-2" in result.stderr
+
+
+def test_cli_nla_round_out_of_range(tmp_path):
+    """Asking for a round that doesn't exist errors with the available list."""
+    p = _write_trace(tmp_path, "r.trace", SYNTHETIC_TRACE)
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "nla", str(p), "--round", "99", "--list", "-f", "plain"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "round 99 not in trace" in result.stderr
+    assert "Detected rounds: 1, 2, 3" in result.stderr
+
+
+def test_cli_nla_by_round(tmp_path):
+    """`lemur nla --by-round --list` groups output with round headers."""
+    p = _write_trace(tmp_path, "br.trace", SYNTHETIC_TRACE)
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "nla", str(p), "--by-round", "--list", "-f", "plain"],
+        capture_output=True, text=True, check=True,
+    )
+    out = result.stdout
+    # Three round headers; round 3 is open (trace ended mid-round).
+    assert "Round 1: lemmas 1–2" in out
+    assert "Round 2: lemmas 3–3" in out
+    assert "Round 3: lemmas 4–4" in out
+    assert "open — trace ended mid-round" in out
+    # Each round renders the lemma list inline.
+    assert out.count("strategy") >= 4   # one strategy line per lemma
+
+
+def test_cli_n_over_time_lemmas_per_round(tmp_path):
+    """--lemmas-per-round augments the JSON output with per-round lemma details."""
+    p = _write_trace(tmp_path, "lpr.trace", SYNTHETIC_TRACE)
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "n-over-time", str(p), "--format", "json", "--lemmas-per-round"],
+        capture_output=True, text=True, check=True,
+    )
+    payload = json.loads(result.stdout)
+    rounds = payload["lpr"]["rounds"]
+    assert len(rounds) == 3
+    assert rounds[0]["round"] == 1
+    assert rounds[0]["lemma_start"] == 1
+    assert rounds[0]["lemma_end"] == 2
+    assert rounds[0]["closed"] is True
+    assert len(rounds[0]["lemmas"]) == 2
+    assert rounds[0]["lemmas"][0]["index"] == 1
+    assert rounds[0]["lemmas"][0]["strategy"] == "strategy"
+    assert rounds[2]["closed"] is False  # final round didn't close
+
+
+def test_cli_lemmas_per_round_requires_json(tmp_path):
+    """--lemmas-per-round + --format table is rejected."""
+    p = _write_trace(tmp_path, "x.trace", SYNTHETIC_TRACE)
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "n-over-time", str(p), "--format", "table", "--lemmas-per-round"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    assert "only applies with --format json" in result.stderr

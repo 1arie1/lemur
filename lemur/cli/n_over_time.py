@@ -25,7 +25,10 @@ import json
 import sys
 from pathlib import Path
 
-from lemur.round import RoundData, parse_round_data, quartiles
+from lemur.round import (
+    RoundData, parse_round_data, quartiles,
+    lemma_ranges_per_round, RoundLemmaRange,
+)
 from lemur.table import make_console
 from lemur.cli import agent_help
 
@@ -51,6 +54,10 @@ def register(subparsers):
                    help='Output file path (required for html/png).')
     p.add_argument('--shared-y', action='store_true',
                    help='Plot formats: share y-axis across subplots.')
+    p.add_argument('--lemmas-per-round', action='store_true',
+                   help='With --format json: include each round\'s lemma '
+                        'list (strategy, conclusion, sizes) per trace. '
+                        'Adds ~20-100x to JSON size on lemma-heavy traces.')
     p.add_argument('--no-color', action='store_true',
                    help='Disable color in rich table output.')
     p.set_defaults(func=run)
@@ -77,6 +84,11 @@ def run(args):
         print(f"Error: --format {fmt} requires --out PATH.", file=sys.stderr)
         sys.exit(2)
 
+    if args.lemmas_per_round and fmt != 'json':
+        print("Error: --lemmas-per-round only applies with --format json.",
+              file=sys.stderr)
+        sys.exit(2)
+
     round_datas: list[RoundData] = []
     for i, tp in enumerate(trace_paths):
         label = labels[i] if labels else tp.stem
@@ -86,7 +98,10 @@ def run(args):
         _render_table(round_datas, plain=False, no_color=args.no_color,
                       out_path=args.out)
     elif fmt == 'json':
-        _render_json(round_datas, out_path=args.out)
+        lemma_data = None
+        if args.lemmas_per_round:
+            lemma_data = _collect_lemmas_per_round(trace_paths, round_datas)
+        _render_json(round_datas, out_path=args.out, lemma_data=lemma_data)
     elif fmt == 'html':
         _render_html(round_datas, out_path=args.out, shared_y=args.shared_y)
     elif fmt == 'png':
@@ -160,10 +175,10 @@ def _render_table(round_datas, *, plain: bool, no_color: bool, out_path: str | N
         ))
 
 
-def _render_json(round_datas, *, out_path: str | None):
+def _render_json(round_datas, *, out_path: str | None, lemma_data=None):
     out = {}
     for rd in round_datas:
-        out[rd.label] = {
+        entry = {
             'totals': rd.totals,
             'max_decision_level': rd.max_decision_level,
             'n_series': rd.n_series,
@@ -178,12 +193,70 @@ def _render_json(round_datas, *, out_path: str | None):
                 for _, attr in _METRIC_LABELS
             },
         }
+        if lemma_data is not None and rd.label in lemma_data:
+            entry['rounds'] = lemma_data[rd.label]
+        out[rd.label] = entry
     text = json.dumps(out, indent=2)
     if out_path:
         Path(out_path).write_text(text)
         print(f"wrote {out_path}", file=sys.stderr)
     else:
         print(text)
+
+
+def _collect_lemmas_per_round(trace_paths, round_datas):
+    """Build per-trace `[{round, lemma_start, lemma_end, closed, lemmas: [...]}]`
+    lists. Each lemma record carries its 1-based original index, strategy,
+    conclusion text, and size counts (preconds / vars / monomials)."""
+    from lemur.parsers import parse_trace, group_by_tag, collect_varmap
+    from lemur.lemma import LemmaAnalyzer
+    from lemur.report import humanize_varmap, humanize_constants
+
+    out: dict[str, list[dict]] = {}
+    for tp, rd in zip(trace_paths, round_datas):
+        entries = list(parse_trace(tp))
+        nla_entries = group_by_tag(entries).get('nla_solver', [])
+        varmap = humanize_varmap(collect_varmap(nla_entries))
+        lemmas = list(LemmaAnalyzer(nla_entries).extract())
+        ranges = lemma_ranges_per_round(rd)
+
+        round_blobs = []
+        for r in ranges:
+            recs = lemmas[r.lemma_start - 1 : r.lemma_end]
+            round_blobs.append({
+                'round': r.round,
+                'lemma_start': r.lemma_start,
+                'lemma_end': r.lemma_end,
+                'closed': r.closed,
+                'lemmas': [
+                    {
+                        'index': r.lemma_start + j,
+                        'strategy': rec.strategy or '',
+                        'conclusion': humanize_constants(
+                            _apply_varmap(rec.conclusion or '', varmap)
+                        ),
+                        'preconds': len(rec.preconditions),
+                        'vars': len(rec.variables),
+                        'monomials': len(rec.monomials),
+                    }
+                    for j, rec in enumerate(recs)
+                ],
+            })
+        out[rd.label] = round_blobs
+    return out
+
+
+def _apply_varmap(s: str, varmap: dict[str, str]) -> str:
+    """Light-weight varmap substitution for JSON output. (report.py keeps
+    the heavyweight pipeline; we only need the simple j-name swap here.)"""
+    if not varmap or not s:
+        return s
+    import re as _re
+    return _re.sub(
+        r'\bj\d+\b',
+        lambda m: varmap.get(m.group(0), m.group(0)),
+        s,
+    )
 
 
 def _require(import_target: str, extra: str = 'plot'):
