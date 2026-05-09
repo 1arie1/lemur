@@ -10,6 +10,7 @@ from lemur.cli import sdiff as sdiff_cli
 from lemur.cli import nla_diff as nla_diff_cli
 from lemur.cli import nla_run as nla_run_cli
 from lemur.cli import stats_diff as stats_diff_cli
+from lemur.cli import n_over_time as n_over_time_cli
 from lemur.cli import agent_help
 
 
@@ -36,6 +37,7 @@ def main():
     nla_diff_cli.register(sub)
     nla_run_cli.register(sub)
     stats_diff_cli.register(sub)
+    n_over_time_cli.register(sub)
 
     args, remaining = parser.parse_known_args()
 
@@ -50,3 +52,7 @@ def main():
     # Re-parse fully now that we know it's not top-level --agent
     args = parser.parse_args()
     args.func(args)
+
+
+if __name__ == '__main__':
+    main()

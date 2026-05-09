@@ -825,6 +825,113 @@ lemur sgrep FILE.smt2 [PATTERN] [--apply TACTIC]
     lemur sdiff --agent  — structural diff between two SMT2 files
                            (composes sgrep's pattern syntax).
 """,
+    'n-over-time': """\
+lemur n-over-time TRACE [TRACE ...] [--label LABEL ...]
+                  [--format table|json|html|png] [--out PATH] [--shared-y]
+  why: visualizes the SAT/NLA/nlsat fixpoint as N(t). Each NLA emission
+       is one (x=emission_index, y=current_decision_level) point. Lets
+       you see whether a TO seed is escalating in N or thrashing in a
+       band, and pair each round-ending pop visually back to the NLA
+       emission that opened the round. The same parser also feeds a
+       round-stats summary (round counts + climb / end-drop / round-
+       length quartiles) — `--format table` is that view.
+
+  decide:
+    file overview / summary stats     → --format table  (default on TTY)
+    feed downstream tooling           → --format json   (default off-TTY)
+    interactive zoom / pan / hover    → --format html --out X.html
+    static image for slides / docs    → --format png  --out X.png
+    multiple seeds side-by-side       → pass multiple TRACE positionals
+    custom names per subplot          → --label foo --label bar (paired)
+
+  required trace tags (capture once, all four together):
+    -tr:decide -tr:pop_scope -tr:nla_solver -tr:arith_conflict
+
+    via lemur:  lemur sweep --trace nla_solver,decide,pop_scope,arith_conflict
+                            --save DIR/
+    via z3:     z3 -tr:decide -tr:pop_scope -tr:nla_solver \\
+                   -tr:arith_conflict ...
+
+    NOTE -tr:nla_solver alone adds ~5x runtime overhead on hard
+    benchmarks. The four together don't add much beyond that.
+
+  inputs:
+    TRACE              positional, repeatable. Each is one .z3-trace file.
+    --label LABEL      paired-by-position label per TRACE. Default: file
+                       stem. Repeatable.
+    --format FMT       table | json | html | png. Default: table on TTY,
+                       json otherwise. html/png require --out.
+    --out PATH         Output file. Required for html/png; optional for
+                       table (writes CSV to file) and json.
+    --shared-y         Plot formats only: shared y-axis across subplots.
+                       Useful when comparing N magnitudes between traces.
+    --no-color         Rich table only.
+
+  what is a "round":
+    A round begins at an NLA emission whose level becomes its anchor N
+    (after either trace start or a prior round-ending pop). N climbs as
+    NLA lemmas drive new SAT decisions. The round ends when a pop_scope
+    brings the trail level *below* N. The crossing depth is N - target.
+
+  plot semantics (html/png):
+    line              N at each NLA emission (x=emission index)
+    green ▲           round start (NLA emission anchored at this N)
+    gold band         round span (start → matching pop)
+    red ▼             post-POP level after a round-ending pop
+    dotted gray       crossing-depth segment from prev N down to post-POP
+
+    A trailing green ▲ with no closing red ▼ means the trace ended
+    mid-round (trace was truncated by --timeout, etc.).
+
+  table / csv schema:
+    rich (TTY default): one panel per trace with totals + quartile table
+                        for round_climbs, end_drops, internal_pop_drops,
+                        round_lengths, n_series.
+    csv (--out / piped): header columns
+                          label,metric,value
+                         then
+                          label,metric,n,min,q1,median,q3,max,mean
+
+  json schema (per trace, keyed by label):
+    {<label>: {totals: {...}, max_decision_level: int,
+               n_series: [int, ...],
+               round_starts: [[idx, N], ...],
+               pop_marks: [[idx, prev_N, post], ...],
+               round_climbs / end_drops / internal_pop_drops /
+                   round_lengths: [int, ...],
+               quartiles: {round_climbs: {n,min,q1,...}, ...}}}
+
+    Pairing: round_starts[i] is the start of the round whose end is
+    pop_marks[i]. If len(round_starts) == len(pop_marks)+1, the trailing
+    round didn't close before the trace ended.
+
+  exit codes:
+    0  success.
+    1  trace not found, or plotly/matplotlib missing for html/png.
+    2  argparse usage error (--label count mismatch, --out missing for
+       html/png, etc.).
+
+  install (for plot formats):
+    pip install 'lemur[plot]'   # adds plotly, matplotlib
+
+  typical session:
+    # 1. capture traces with the four tags
+    lemur sweep bench.smt2 --seeds 0,1 --timeout 30 \\
+      --trace nla_solver,decide,pop_scope,arith_conflict --save ./out
+
+    # 2. quick stats summary
+    lemur n-over-time ./out/default_s0.trace ./out/default_s1.trace
+
+    # 3. interactive zoom on the same data
+    lemur n-over-time ./out/default_s0.trace ./out/default_s1.trace \\
+      --label 'TO seed' --label 'closing seed' \\
+      --format html --out /tmp/n.html
+
+  related:
+    lemur sweep --trace ...   produces the trace files.
+    lemur stats               trace-wide tag/function aggregates.
+    lemur nla                 NLA lemma drill-down on the same trace.
+""",
     'sdiff': """\
 lemur sdiff A.smt2 B.smt2 [--apply TACTIC | --apply-a T --apply-b T]
   why: structural-count diff between two SMT2 files. Tells you "encoder
