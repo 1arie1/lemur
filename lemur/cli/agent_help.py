@@ -580,6 +580,12 @@ lemur nla TRACE
     --no-color            disable color in rich.
     --no-varmap           show raw LP j-variables (j7, j143) instead
                           of resolved SMT names.
+    --no-truncate         show full SMT names in --detail/--details
+                          and --list. Default truncates substituted
+                          SMT expressions to 40 chars with trailing
+                          `...` so list rows stay one line; pass this
+                          when a detail row shows `...` on lemma
+                          literals and you need the full text.
     --limit N             summary mode: number of lemma previews
                           (default 5).
     --delta-limit N       summary mode: max variable-change lines

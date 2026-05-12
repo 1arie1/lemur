@@ -12,6 +12,7 @@ from lemur.report import (
     render_lemma_list_rich, render_lemma_list_plain,
     parse_lemma_ranges, expand_lemma_ranges,
     humanize_varmap, humanize_constants,
+    _SMT_EXPR_MAX_LEN,
 )
 from lemur.round import parse_round_data, lemma_ranges_per_round, RoundLemmaRange
 from lemur.cli import agent_help
@@ -32,6 +33,11 @@ def register(subparsers):
                    help='Disable color output')
     p.add_argument('--no-varmap', action='store_true',
                    help='Show raw LP j-variables instead of SMT names')
+    p.add_argument('--no-truncate', action='store_true',
+                   help='Show full SMT names in --detail/--details and --list. '
+                        'Default truncates to 40 chars (one-line list mode). '
+                        'Use this when a detail shows "... " on lemma literals '
+                        'and you want the entire expression.')
 
     mode = p.add_mutually_exclusive_group()
     mode.add_argument('--list', '-l', action='store_true',
@@ -340,6 +346,8 @@ def run(args):
     fmt = args.format
     use_rich = fmt is None or fmt == 'rich'
     console = make_console(no_color=args.no_color) if use_rich else None
+    # `max_len=None` is the no-truncate sentinel for the render layer.
+    max_len = None if args.no_truncate else _SMT_EXPR_MAX_LEN
 
     # Determine mode. `--sample` defaults to list output when no other
     # render mode is set (matches the workflow it's replacing — quick
@@ -351,22 +359,23 @@ def run(args):
                   "not --detail/--details.", file=sys.stderr)
             sys.exit(2)
         _render_list_by_round(lemma_records, round_ranges, orig_idx_by_lineno,
-                              fmt, console, varmap)
+                              fmt, console, varmap, max_len)
     elif args.list:
-        _render_list(lemma_records, fmt, console, varmap)
+        _render_list(lemma_records, fmt, console, varmap, max_len)
     elif args.detail is not None:
-        _render_details([args.detail], lemma_records, fmt, console, varmap)
+        _render_details([args.detail], lemma_records, fmt, console, varmap, max_len)
     elif args.details is not None:
         ranges = parse_lemma_ranges(args.details)
         indices = expand_lemma_ranges(ranges, len(lemma_records))
-        _render_details(indices, lemma_records, fmt, console, varmap)
+        _render_details(indices, lemma_records, fmt, console, varmap, max_len)
     elif sample_spec is not None:
-        _render_list(lemma_records, fmt, console, varmap)
+        _render_list(lemma_records, fmt, console, varmap, max_len)
     else:
         _render_summary(nla_entries, lemma_records, fmt, console, varmap,
                         args.limit, args.delta_limit,
                         productivity_threshold=args.productivity_threshold,
-                        yield_threshold=args.yield_threshold)
+                        yield_threshold=args.yield_threshold,
+                        max_len=max_len)
 
 
 def _run_xform(args, trace_path: Path) -> None:
@@ -508,18 +517,18 @@ def _run_target_only(args, trace_path: Path) -> None:
     sys.stdout.write(f"source: {provenance}\n")
 
 
-def _render_list(lemma_records, fmt, console, varmap):
+def _render_list(lemma_records, fmt, console, varmap, max_len=_SMT_EXPR_MAX_LEN):
     if not lemma_records:
         print("No lemmas found.", file=sys.stderr)
         return
     if console and (fmt is None or fmt == 'rich'):
-        render_lemma_list_rich(lemma_records, console, varmap=varmap)
+        render_lemma_list_rich(lemma_records, console, varmap=varmap, max_len=max_len)
     else:
-        print(render_lemma_list_plain(lemma_records, varmap=varmap))
+        print(render_lemma_list_plain(lemma_records, varmap=varmap, max_len=max_len))
 
 
 def _render_list_by_round(lemma_records, round_ranges, orig_idx_by_lineno,
-                          fmt, console, varmap):
+                          fmt, console, varmap, max_len=_SMT_EXPR_MAX_LEN):
     """List output sectioned by round. Empty rounds (filtered out by
     --strategy etc.) are skipped silently."""
     if not lemma_records:
@@ -547,14 +556,15 @@ def _render_list_by_round(lemma_records, round_ranges, orig_idx_by_lineno,
         if use_rich:
             console.print()
             console.print(RichText(header, style="bold yellow"))
-            render_lemma_list_rich(recs, console, varmap=varmap)
+            render_lemma_list_rich(recs, console, varmap=varmap, max_len=max_len)
         else:
             print()
             print(header)
-            print(render_lemma_list_plain(recs, varmap=varmap))
+            print(render_lemma_list_plain(recs, varmap=varmap, max_len=max_len))
 
 
-def _render_details(indices, lemma_records, fmt, console, varmap):
+def _render_details(indices, lemma_records, fmt, console, varmap,
+                    max_len=_SMT_EXPR_MAX_LEN):
     if not lemma_records:
         print("No lemmas found.", file=sys.stderr)
         return
@@ -567,11 +577,13 @@ def _render_details(indices, lemma_records, fmt, console, varmap):
         if console and (fmt is None or fmt == 'rich'):
             if idx != indices[0]:
                 console.print()
-            render_lemma_detail(lemma_records[i], idx, console, varmap=varmap)
+            render_lemma_detail(lemma_records[i], idx, console,
+                                varmap=varmap, max_len=max_len)
         else:
             if idx != indices[0]:
                 print()
-            print(render_lemma_detail_plain(lemma_records[i], idx, varmap=varmap))
+            print(render_lemma_detail_plain(lemma_records[i], idx,
+                                            varmap=varmap, max_len=max_len))
 
 
 def _productivity_rows(prod, productivity_threshold: float,
@@ -611,7 +623,8 @@ def _productivity_rows(prod, productivity_threshold: float,
 def _render_summary(nla_entries, lemma_records, fmt, console, varmap,
                     limit, delta_limit, *,
                     productivity_threshold: float = 0.35,
-                    yield_threshold: float = 0.40):
+                    yield_threshold: float = 0.40,
+                    max_len: int | None = _SMT_EXPR_MAX_LEN):
     """Show nla_solver overview: entry counts + lemma summary."""
     from collections import Counter
     import re
@@ -658,7 +671,8 @@ def _render_summary(nla_entries, lemma_records, fmt, console, varmap,
     if lemma_records:
         rows.append(('', ''))
         rows.extend(lemma_summary_rows(lemma_records, lemma_limit=limit,
-                                       delta_limit=delta_limit, varmap=varmap))
+                                       delta_limit=delta_limit, varmap=varmap,
+                                       max_len=max_len))
 
     # Top functions
     func_counts = Counter(e.function for e in nla_entries)

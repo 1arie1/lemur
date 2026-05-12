@@ -284,6 +284,39 @@ def test_cli_n_over_time_lemmas_per_round(tmp_path):
     assert rounds[2]["closed"] is False  # final round didn't close
 
 
+def test_cli_nla_no_truncate(tmp_path):
+    """`lemur nla --detail N --no-truncate` shows the full SMT name from the
+    varmap; without the flag the substituted text is truncated to 40 chars."""
+    long_smt = "(div (if (or #2084 #1822) (+ R12 R34 R56 R78 R90 R12) R0) 2)"
+    assert len(long_smt) > 40
+    # Trace: a varmap line maps j1 → long_smt, and a ~lemma_builder block's
+    # conclusion references j1.
+    trace = "".join([
+        _block("nla_solver", f"varmap: j1=1: {long_smt}", fn="check"),
+        _block("nla_solver",
+               f"strategy 1\n ==> j1 >= 1",
+               fn="~lemma_builder"),
+    ])
+    p = _write_trace(tmp_path, "long.trace", trace)
+
+    # Default: truncated.
+    result = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "nla", str(p), "--detail", "1", "-f", "plain"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "..." in result.stdout
+    assert long_smt not in result.stdout
+
+    # --no-truncate: full text.
+    result_full = subprocess.run(
+        [sys.executable, "-m", "lemur.cli.main",
+         "nla", str(p), "--detail", "1", "--no-truncate", "-f", "plain"],
+        capture_output=True, text=True, check=True,
+    )
+    assert long_smt in result_full.stdout
+
+
 def test_cli_lemmas_per_round_requires_json(tmp_path):
     """--lemmas-per-round + --format table is rejected."""
     p = _write_trace(tmp_path, "x.trace", SYNTHETIC_TRACE)

@@ -161,9 +161,13 @@ def humanize_text(text: str) -> Text:
     return result
 
 
-def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
+def _apply_varmap(text: str, varmap: dict[str, str],
+                  max_len: int | None = _SMT_EXPR_MAX_LEN) -> str:
     """Replace LP variable tokens (j25, _t95, ...) with their SMT names.
 
+    `max_len`: truncate substituted SMT names to this many characters
+    (with a trailing `...`). Pass `None` to disable truncation. Default
+    matches the legacy 40-char cap that keeps list-mode rows tidy.
     Returns text unchanged if varmap is empty or no tokens match.
     """
     if not varmap:
@@ -173,8 +177,8 @@ def _apply_varmap(text: str, varmap: dict[str, str]) -> str:
         smt = varmap.get(token)
         if smt is None:
             return token
-        if len(smt) > _SMT_EXPR_MAX_LEN:
-            return smt[:_SMT_EXPR_MAX_LEN - 3] + '...'
+        if max_len is not None and len(smt) > max_len:
+            return smt[:max_len - 3] + '...'
         return smt
     return _LP_VAR_TOKEN_RE.sub(_repl, text)
 
@@ -248,8 +252,10 @@ def lemma_summary_rows(records: list[LemmaRecord],
                        lemma_limit: int = 5,
                        delta_limit: int = 5,
                        varmap: dict[str, str] | None = None,
+                       max_len: int | None = _SMT_EXPR_MAX_LEN,
                        ) -> list[tuple[str, str]]:
-    """Generate key-value rows summarizing lemma records, for StatsOutput."""
+    """Generate key-value rows summarizing lemma records, for StatsOutput.
+    `max_len=None` disables truncation of substituted SMT names."""
     vm = varmap or {}
     rows: list[tuple[str, str]] = []
     rows.append(('Lemmas generated', str(len(records))))
@@ -267,8 +273,9 @@ def lemma_summary_rows(records: list[LemmaRecord],
         for i, record in enumerate(records[:lemma_limit], 1):
             strategy = _pp_strategy(record.strategy) if record.strategy else '<?>'
             conclusion = record.conclusion or '<no conclusion>'
-            conclusion = humanize_constants(_apply_varmap(conclusion, vm))
-            hint = _monomial_hint(record, vm)
+            conclusion = humanize_constants(
+                _apply_varmap(conclusion, vm, max_len=max_len))
+            hint = _monomial_hint(record, vm, max_len=max_len)
             rows.append((f'  {i}. {strategy}', f'==> {conclusion}{hint}'))
         if len(records) > lemma_limit:
             rows.append(('', f'  ... {len(records) - lemma_limit} more'))
@@ -290,8 +297,10 @@ def lemma_summary_rows(records: list[LemmaRecord],
 # --- Lemma list (one line per lemma) ---
 
 def render_lemma_list_rich(records: list[LemmaRecord], console: Console,
-                           varmap: dict[str, str] | None = None):
-    """Render a table with one row per lemma."""
+                           varmap: dict[str, str] | None = None,
+                           max_len: int | None = _SMT_EXPR_MAX_LEN):
+    """Render a table with one row per lemma. `max_len=None` disables
+    truncation of substituted SMT names in the Conclusion column."""
     vm = varmap or {}
     table = Table(title=f'All lemmas ({len(records)})', show_lines=False)
     table.add_column('#', justify='right', style='dim')
@@ -303,7 +312,8 @@ def render_lemma_list_rich(records: list[LemmaRecord], console: Console,
 
     for i, r in enumerate(records, 1):
         strategy = _pp_strategy(r.strategy) if r.strategy else '<?>'
-        conclusion = humanize_constants(_apply_varmap(r.conclusion or '', vm))
+        conclusion = humanize_constants(
+            _apply_varmap(r.conclusion or '', vm, max_len=max_len))
         hint = _monomial_hint_short(r, vm)
         table.add_row(
             str(i),
@@ -317,13 +327,16 @@ def render_lemma_list_rich(records: list[LemmaRecord], console: Console,
 
 
 def render_lemma_list_plain(records: list[LemmaRecord],
-                            varmap: dict[str, str] | None = None) -> str:
-    """Render one line per lemma as plain text."""
+                            varmap: dict[str, str] | None = None,
+                            max_len: int | None = _SMT_EXPR_MAX_LEN) -> str:
+    """Render one line per lemma as plain text. `max_len=None` disables
+    SMT-name truncation in the conclusion."""
     vm = varmap or {}
     lines = []
     for i, r in enumerate(records, 1):
         strategy = _pp_strategy(r.strategy) if r.strategy else '<?>'
-        conclusion = _apply_varmap(r.conclusion or '<no conclusion>', vm)
+        conclusion = _apply_varmap(r.conclusion or '<no conclusion>', vm,
+                                   max_len=max_len)
         hint = _monomial_hint_short(r, vm)
         parts = [f'{i}.', strategy, f'==> {conclusion}']
         if hint:
@@ -348,8 +361,11 @@ def _monomial_hint_short(record: LemmaRecord,
 
 def render_lemma_detail(record: LemmaRecord, index: int,
                         console: Console,
-                        varmap: dict[str, str] | None = None):
-    """Render a detailed lemma table with Rich."""
+                        varmap: dict[str, str] | None = None,
+                        max_len: int | None = _SMT_EXPR_MAX_LEN):
+    """Render a detailed lemma table with Rich. `max_len=None` disables
+    SMT-name truncation in substituted expressions and the SMT-Name
+    column."""
     vm = varmap or {}
 
     # Title
@@ -366,12 +382,14 @@ def render_lemma_detail(record: LemmaRecord, index: int,
                 prec_text.append('\n')
             if cond.index is not None:
                 prec_text.append(f'({cond.index}) ', style='dim')
-            prec_text.append_text(humanize_text(_apply_varmap(cond.expression, vm)))
+            prec_text.append_text(humanize_text(
+                _apply_varmap(cond.expression, vm, max_len=max_len)))
         console.print(Panel(prec_text, title=f'{title} — Preconditions', expand=False))
 
     # Conclusion
     if record.conclusion:
-        conclusion_ht = humanize_text(_apply_varmap(record.conclusion, vm))
+        conclusion_ht = humanize_text(
+            _apply_varmap(record.conclusion, vm, max_len=max_len))
         conc_text = Text('==> ', style='bold')
         conc_text.append_text(conclusion_ht)
         console.print(Panel(conc_text, title='Conclusion', expand=False))
@@ -405,7 +423,8 @@ def render_lemma_detail(record: LemmaRecord, index: int,
         if var.root and var.root != var.name:
             root_text.stylize('red')
 
-        smt_raw = _truncate_smt(vm.get(var.name, '')) if has_varmap else None
+        smt_raw = (_truncate_smt(vm.get(var.name, ''), max_len=max_len)
+                   if has_varmap else None)
 
         row = [name_text]
         if has_varmap:
@@ -414,7 +433,8 @@ def render_lemma_detail(record: LemmaRecord, index: int,
             humanize_constants(format_value(var.value)),
             'Y' if var.is_basic else '',
             humanize_constants(format_bounds(var.bounds)),
-            humanize_constants(_apply_varmap(var.definition, vm)) if var.definition else '',
+            (humanize_constants(_apply_varmap(var.definition, vm, max_len=max_len))
+             if var.definition else ''),
             root_text,
         ])
         table.add_row(*row)
@@ -423,8 +443,10 @@ def render_lemma_detail(record: LemmaRecord, index: int,
 
 
 def render_lemma_detail_plain(record: LemmaRecord, index: int,
-                              varmap: dict[str, str] | None = None) -> str:
-    """Render a lemma detail as plain text (for CSV/JSON modes)."""
+                              varmap: dict[str, str] | None = None,
+                              max_len: int | None = _SMT_EXPR_MAX_LEN) -> str:
+    """Render a lemma detail as plain text. `max_len=None` shows full
+    SMT names instead of truncating to the default cap."""
     vm = varmap or {}
     lines = []
     title_parts = [_pp_strategy(record.strategy) if record.strategy else '<unknown>']
@@ -436,10 +458,10 @@ def render_lemma_detail_plain(record: LemmaRecord, index: int,
         lines.append('Preconditions:')
         for cond in sorted(record.preconditions, key=_precondition_sort_key):
             prefix = f'  ({cond.index}) ' if cond.index is not None else '  '
-            lines.append(f'{prefix}{_apply_varmap(cond.expression, vm)}')
+            lines.append(f'{prefix}{_apply_varmap(cond.expression, vm, max_len=max_len)}')
 
     if record.conclusion:
-        lines.append(f'Conclusion: ==> {_apply_varmap(record.conclusion, vm)}')
+        lines.append(f'Conclusion: ==> {_apply_varmap(record.conclusion, vm, max_len=max_len)}')
 
     if record.variables:
         lines.append('Variables:')
@@ -447,7 +469,7 @@ def render_lemma_detail_plain(record: LemmaRecord, index: int,
             parts = [f'  {var.name}']
             smt = vm.get(var.name)
             if smt:
-                parts.append(f'({_truncate_smt(smt)})')
+                parts.append(f'({_truncate_smt(smt, max_len=max_len)})')
             if var.value:
                 parts.append(f'= {format_value(var.value)}')
             if var.is_basic:
@@ -455,7 +477,7 @@ def render_lemma_detail_plain(record: LemmaRecord, index: int,
             if var.bounds:
                 parts.append(format_bounds(var.bounds))
             if var.definition:
-                parts.append(f':= {_apply_varmap(var.definition, vm)}')
+                parts.append(f':= {_apply_varmap(var.definition, vm, max_len=max_len)}')
             if var.root and var.root != var.name:
                 parts.append(f'root={var.root}')
             lines.append(' '.join(parts))
@@ -646,21 +668,23 @@ def _precondition_sort_key(cond: Precondition) -> tuple:
     return (0, cond.index, cond.expression)
 
 
-def _truncate_smt(smt: str, max_len: int = _SMT_EXPR_MAX_LEN) -> str:
-    """Truncate long SMT expressions for display."""
-    if len(smt) <= max_len:
+def _truncate_smt(smt: str, max_len: int | None = _SMT_EXPR_MAX_LEN) -> str:
+    """Truncate `smt` to `max_len` chars with a trailing `...`. Pass
+    `None` to disable truncation."""
+    if max_len is None or len(smt) <= max_len:
         return smt
     return smt[:max_len - 3] + '...'
 
 
 def _monomial_hint(record: LemmaRecord,
-                   varmap: dict[str, str] | None = None) -> str:
+                   varmap: dict[str, str] | None = None,
+                   max_len: int | None = _SMT_EXPR_MAX_LEN) -> str:
     if not record.monomials:
         return ''
     vm = varmap or {}
     parts = []
     for m in sorted(record.monomials, key=lambda x: _variable_name_sort_key(x.variable)):
-        expr = _apply_varmap(m.expression, vm)
+        expr = _apply_varmap(m.expression, vm, max_len=max_len)
         var_display = vm.get(m.variable, m.variable)
         parts.append(f'{var_display} := {expr}')
     return f' [{"; ".join(parts)}]'
